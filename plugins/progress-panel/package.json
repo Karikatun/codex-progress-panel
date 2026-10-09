@@ -1,6 +1,6 @@
 {
   "name": "codex-progress-panel",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local Codex progress snapshots with a read-only MCP App.",
   "license": "MIT",
   "author": "Karikatun",

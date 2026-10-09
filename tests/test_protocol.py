@@ -60,8 +60,8 @@ def assert_schema(value, spec):
 
 
 class Client:
-    def __init__(self, data):
-        self.process = subprocess.Popen([sys.executable, "-B", str(SERVER), "--data-dir", str(data)],
+    def __init__(self, data, extra_args=()):
+        self.process = subprocess.Popen([sys.executable, "-B", str(SERVER), "--data-dir", str(data), *extra_args],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
         self.next_id = 1
         self.tool_calls = []
@@ -126,8 +126,8 @@ class ProtocolTests(unittest.TestCase):
             client.close()
         self.temp.cleanup()
 
-    def start(self):
-        client = Client(self.data)
+    def start(self, extra_args=()):
+        client = Client(self.data, extra_args)
         self.clients.append(client)
         client.initialize()
         return client
@@ -141,6 +141,79 @@ class ProtocolTests(unittest.TestCase):
         reply = self.client.call("create_progress", {"task_id": ident, **self.fields()})
         self.assertNotIn("isError", reply)
         return reply["structuredContent"]
+
+    def test_language_default_configuration_override_and_read_once_preserve_state(self):
+        def language(client):
+            resource = client.request("resources/read", {"uri": "ui://progress/panel.html"})["result"]["contents"][0]
+            title = client.request("resources/list")["result"]["resources"][0]["title"]
+            return resource["text"], title
+        default_html, title = language(self.client)
+        self.assertIn('<html lang="en">', default_html)
+        self.assertEqual(title, "Task stages")
+        created = self.create()
+        args = {"task_id": "task-test", "write_token": created["write_token"], "expected_revision": 1, **self.fields()}
+        final = self.client.call("finish_progress", args)["structuredContent"]["state"]
+        import sqlite3
+        with sqlite3.connect(str(self.data / "progress.sqlite3")) as db:
+            stored = db.execute("SELECT state FROM tasks").fetchone()[0]
+        config = self.data / "config.json"
+        config.write_text('{"language":"ru"}')
+        config.chmod(0o600)
+        russian = self.start()
+        russian_html, title = language(russian)
+        self.assertIn('<html lang="ru">', russian_html)
+        self.assertEqual(title, "Этапы задачи")
+        self.assertEqual(language(self.client), (default_html, "Task stages"))
+        config.write_text('{"language":"en"}')
+        self.assertEqual(language(russian), (russian_html, "Этапы задачи"))
+        self.assertIn('<html lang="en">', language(self.start())[0])
+        config.write_text('{"language":"ru"}')
+        self.assertIn('<html lang="en">', language(self.start(("--language", "en")))[0])
+        config.write_text('invalid config skipped by an explicit override')
+        self.assertIn('<html lang="ru">', language(self.start(("--language", "ru")))[0])
+        for client in (self.client, russian):
+            self.assertEqual(client.call("get_progress", {"task_id": "task-test", "read_token": created["read_token"]})["structuredContent"]["state"], final)
+        with sqlite3.connect(str(self.data / "progress.sqlite3")) as db:
+            self.assertEqual(db.execute("SELECT state FROM tasks").fetchone()[0], stored)
+
+    def test_invalid_language_configuration_fails_before_sqlite_open(self):
+        invalid = [b'{"language":"fr"}', b'{"language":true}', b'{"language":null}', b'{"language":[]}', b'[]', b'{}',
+                   b'{"language":"en","extra":1}', b'{"language":"en","language":"ru"}', b'{"language":NaN}',
+                   b'\xff', b'{', b' ' * 1025]
+        for index, content in enumerate(invalid):
+            data = Path(self.temp.name).resolve() / ("invalid-" + str(index))
+            data.mkdir(mode=0o700)
+            config = data / "config.json"
+            config.write_bytes(content); config.chmod(0o600)
+            result = subprocess.run([sys.executable, "-B", str(SERVER), "--data-dir", str(data)], input=b"", capture_output=True, timeout=4)
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(result.stdout, b"")
+            self.assertIn(b"invalid config.json", result.stderr)
+            self.assertFalse((data / "progress.sqlite3").exists())
+            self.assertEqual(config.read_bytes(), content)
+        data = Path(self.temp.name).resolve() / "invalid-cli"
+        result = subprocess.run([sys.executable, "-B", str(SERVER), "--data-dir", str(data), "--language", "fr"], input=b"", capture_output=True, timeout=4)
+        self.assertEqual(result.returncode, 2); self.assertEqual(result.stdout, b"")
+        self.assertFalse(data.exists())
+
+    def test_unsafe_language_configuration_is_rejected_without_opening_sqlite(self):
+        target = Path(self.temp.name).resolve() / "configuration-target"
+        target.write_text('{"language":"ru"}'); target.chmod(0o600)
+        for kind in ("symlink", "directory", "fifo", "public", "hardlink"):
+            data = Path(self.temp.name).resolve() / kind
+            data.mkdir(mode=0o700)
+            config = data / "config.json"
+            if kind == "symlink": config.symlink_to(target)
+            elif kind == "directory": config.mkdir()
+            elif kind == "fifo": os.mkfifo(config, 0o600)
+            elif kind == "hardlink": os.link(target, config)
+            else: config.write_text('{"language":"ru"}'); config.chmod(0o644)
+            result = subprocess.run([sys.executable, "-B", str(SERVER), "--data-dir", str(data)], input=b"", capture_output=True, timeout=4)
+            self.assertEqual(result.returncode, 1, kind)
+            self.assertEqual(result.stdout, b"")
+            self.assertIn(b"invalid config.json", result.stderr)
+            self.assertFalse((data / "progress.sqlite3").exists())
+        self.assertEqual(target.read_text(), '{"language":"ru"}')
 
     def test_initialize_accepts_optional_protocol_metadata(self):
         client = Client(self.data)

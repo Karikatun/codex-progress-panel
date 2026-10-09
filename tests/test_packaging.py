@@ -15,7 +15,7 @@ class PackagingTests(unittest.TestCase):
     def test_release_identity_and_distribution_hygiene(self):
         plugin = json.loads((PACKAGE / "plugin.json").read_text())
         self.assertEqual(plugin["name"], "codex-progress-panel")
-        self.assertEqual(plugin["version"], "0.1.0")
+        self.assertEqual(plugin["version"], "0.1.1")
         self.assertEqual(plugin["license"], "MIT")
         self.assertFalse((PACKAGE / ".mcp.json").exists())
         self.assertFalse((PACKAGE / ".codex-plugin").exists())
@@ -36,6 +36,27 @@ class PackagingTests(unittest.TestCase):
         marketplace = json.loads((ROOT / ".agents/plugins/marketplace.json").read_text())
         self.assertEqual(marketplace["plugins"][0]["name"], plugin["name"])
         self.assertEqual((ROOT / marketplace["plugins"][0]["source"]["path"]).resolve(), PACKAGE)
+
+    def test_full_plugin_manifest_reads_external_language_configuration(self):
+        with tempfile.TemporaryDirectory(prefix="plugin-language-") as temp:
+            area = Path(temp).resolve()
+            data = area / "private data"; data.mkdir(mode=0o700)
+            config = data / "config.json"; config.write_text('{"language":"ru"}'); config.chmod(0o600)
+            manifest = json.loads((PACKAGE / "mcp.json").read_text())["mcpServers"]["progress"]
+            messages = [
+                {"jsonrpc":"2.0", "id":1, "method":"initialize", "params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"language-test","version":"1"}}},
+                {"jsonrpc":"2.0", "method":"notifications/initialized"},
+                {"jsonrpc":"2.0", "id":2, "method":"resources/read", "params":{"uri":"ui://progress/panel.html"}},
+                {"jsonrpc":"2.0", "id":3, "method":"resources/list"},
+            ]
+            process = subprocess.run([manifest["command"], *manifest["args"], "--data-dir", str(data)], cwd=PACKAGE / manifest["cwd"],
+                input="".join(json.dumps(item)+"\n" for item in messages), text=True, capture_output=True, timeout=8)
+            self.assertEqual(process.returncode, 0, process.stderr)
+            self.assertEqual(process.stderr, "")
+            replies = [json.loads(line) for line in process.stdout.splitlines()]
+            self.assertIn('<html lang="ru">', replies[1]["result"]["contents"][0]["text"])
+            self.assertEqual(replies[2]["result"]["resources"][0]["title"], "Этапы задачи")
+            self.assertEqual(config.read_text(), '{"language":"ru"}')
 
     def test_manifest_launches_copied_package_with_spaces_and_external_state(self):
         with tempfile.TemporaryDirectory(prefix="package-launch-") as temp:
@@ -64,13 +85,13 @@ class PackagingTests(unittest.TestCase):
             self.assertEqual(process.stderr, "")
             replies = [json.loads(line) for line in process.stdout.splitlines()]
             self.assertEqual([r["id"] for r in replies], [1, 2, 3])
-            self.assertEqual(replies[0]["result"]["serverInfo"], {"name": "codex-progress-panel", "version": "0.1.0"})
+            self.assertEqual(replies[0]["result"]["serverInfo"], {"name": "codex-progress-panel", "version": "0.1.1"})
             self.assertEqual(len(replies[1]["result"]["tools"]), 5)
             reader = next(t for t in replies[1]["result"]["tools"] if t["name"] == "get_progress")
             self.assertEqual(reader["_meta"]["ui"]["visibility"], ["model", "app"])
             self.assertNotIn("resourceUri", reader["_meta"]["ui"])
             self.assertTrue(reader["annotations"]["readOnlyHint"])
-            self.assertIn("version:'0.1.0'", replies[2]["result"]["contents"][0]["text"])
+            self.assertIn("version:'0.1.1'", replies[2]["result"]["contents"][0]["text"])
             self.assertTrue((data_dir / "progress.sqlite3").is_file())
             self.assertEqual(before, {str(p.relative_to(package)): hashlib.sha256(p.read_bytes()).hexdigest() for p in package.rglob("*") if p.is_file()})
             self.assertFalse(any(caller.iterdir()))

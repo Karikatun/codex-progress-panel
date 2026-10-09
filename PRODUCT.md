@@ -6,7 +6,7 @@
 A local MCP App that shows an existing assistant execution's actual stages while the conversation continues. The root agent supplies explicit short summaries; the panel does not inspect chats, repositories, logs or credentials.
 
 ## Audience and task
-Russian-speaking engineer observing ongoing work. Success means the current stage, actor and blocker are immediately visible, with completed work kept distinct from verification.
+Engineer observing ongoing work, with English interface labels by default and Russian available through server configuration. Success means the current stage, actor and blocker are immediately visible, with completed work kept distinct from verification.
 
 ## Platform
 web

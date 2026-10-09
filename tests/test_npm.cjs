@@ -66,7 +66,7 @@ function start(command, args, options = {}) {
   client.initialize = async () => {
     const result = await client.request('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'npm-package-test', version: '1' } });
     client.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
-    assert.deepEqual(result.serverInfo, { name: 'codex-progress-panel', version: '0.1.0' });
+    assert.deepEqual(result.serverInfo, { name: 'codex-progress-panel', version: '0.1.1' });
   };
   client.close = async () => { proc.stdin.end(); const result = await deadline(client.exit); assert.deepEqual(result, { code: 0, signal: null }, client.stderr); assert.equal(client.stderr, ''); assert.equal(client.queue.length, 0); };
   return client;
@@ -112,7 +112,7 @@ before(() => {
   npmEnv = npmEnvironment(path.join(area, 'pack-cache'));
   python = execFileSync('python3', ['-B', '-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).trim();
   const result = JSON.parse(execFileSync('npm', ['pack', PACKAGE, '--ignore-scripts', '--pack-destination', area, '--json'], { env: npmEnv, cwd: area, encoding: 'utf8', timeout: 15000 }))[0];
-  assert.equal(result.name, 'codex-progress-panel'); assert.equal(result.version, '0.1.0');
+  assert.equal(result.name, 'codex-progress-panel'); assert.equal(result.version, '0.1.1');
   assert.deepEqual(result.files.map(file => file.path).sort(), EXPECTED);
   assert.ok(result.size < 100000 && result.unpackedSize < 200000, 'unexpected payload growth');
   tarball = path.join(area, result.filename);
@@ -152,7 +152,7 @@ test('real offline npm exec: stdio, resources, update, freeze and durable restar
   let client = fromNpm(data, 'first cache with spaces'); await client.initialize();
   const tools = await client.request('tools/list'); assert.equal(tools.tools.length, 5);
   const ui = await client.request('resources/read', { uri: 'ui://progress/panel.html' });
-  assert.equal(ui.contents[0].mimeType, 'text/html;profile=mcp-app'); assert.ok(ui.contents[0].text.includes('<!doctype html>'));
+  assert.equal(ui.contents[0].mimeType, 'text/html;profile=mcp-app'); assert.ok(ui.contents[0].text.includes('<!doctype html>')); assert.ok(ui.contents[0].text.includes('<html lang="en">'));
   const fields = { title: 'Packed npm execution', stages: [{ id: 'verify', title: 'Check npm', status: 'running' }] };
   const created = (await client.call('create_progress', { task_id: 'npm-execution-a', ...fields })).structuredContent;
   const opening = { task_id: 'npm-execution-a', read_token: created.read_token };
@@ -176,6 +176,23 @@ test('real offline npm exec: stdio, resources, update, freeze and durable restar
     assert.deepEqual(treeDigest(roots[0]), packedBefore, 'runtime changed npm cache package bytes');
   }
   assert.equal(fs.readdirSync(path.join(area, 'caller with spaces Кириллица')).length, 0);
+});
+
+test('real offline npm exec reads Russian config and forwards an English override without changing finalized state', async () => {
+  const data=path.join(area,'configured language');fs.mkdirSync(data,{mode:0o700});
+  const config=path.join(data,'config.json');fs.writeFileSync(config,'{"language":"ru"}',{mode:0o600});
+  let client=fromNpm(data,'language cache');await client.initialize();
+  assert.ok((await client.request('resources/read',{uri:'ui://progress/panel.html'})).contents[0].text.includes('<html lang="ru">'));
+  assert.equal((await client.request('resources/list')).resources[0].title,'Этапы задачи');
+  const fields={title:'Untranslated title',stages:[{id:'check',title:'Исходный текст',status:'completed'}]};
+  const created=(await client.call('create_progress',{task_id:'language-task',...fields})).structuredContent;
+  const final=(await client.call('finish_progress',{task_id:'language-task',write_token:created.write_token,expected_revision:1,...fields})).structuredContent.state;
+  await client.close();
+  client=start('npm',['exec','--offline','--yes','--ignore-scripts',`--package=${tarball}`,'--','codex-progress-panel','--data-dir',data,'--language','en'],{env:npmEnvironment(path.join(area,'language cache'))});
+  await client.initialize();assert.ok((await client.request('resources/read',{uri:'ui://progress/panel.html'})).contents[0].text.includes('<html lang="en">'));
+  assert.equal((await client.request('resources/list')).resources[0].title,'Task stages');
+  assert.deepEqual((await client.call('get_progress',{task_id:'language-task',read_token:created.read_token})).structuredContent.state,final);
+  await client.close();assert.equal(fs.readFileSync(config,'utf8'),'{"language":"ru"}');
 });
 
 test('packed launcher forwards argument boundaries and preserves child nonzero startup errors', async () => {
@@ -249,7 +266,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
     const blocked = fakePython(`blocked initializing interpreter ${signal}`, `
       require('node:readline').createInterface({input:process.stdin}).on('line', line => {
         const request=JSON.parse(line);
-        if(request.method==='initialize') console.log(JSON.stringify({jsonrpc:'2.0',id:request.id,result:{serverInfo:{name:'codex-progress-panel',version:'0.1.0'}}}));
+        if(request.method==='initialize') console.log(JSON.stringify({jsonrpc:'2.0',id:request.id,result:{serverInfo:{name:'codex-progress-panel',version:'0.1.1'}}}));
       });
       setInterval(()=>{},1000);
     `);
@@ -283,6 +300,7 @@ test('SIGTERM escalates for an owned child that ignores termination', async () =
 
 test('explicit help/version work from packed launcher without Python or state', () => {
   const env = { ...npmEnv, PATH: path.join(area, 'empty PATH') };
-  assert.equal(execFileSync(process.execPath, [launcher, '--version'], { env, encoding: 'utf8' }), '0.1.0\n');
-  assert.ok(execFileSync(process.execPath, [launcher, '--help'], { env, encoding: 'utf8' }).includes('Python 3.9+'));
+  assert.equal(execFileSync(process.execPath, [launcher, '--version'], { env, encoding: 'utf8' }), '0.1.1\n');
+  const help=execFileSync(process.execPath, [launcher, '--help'], { env, encoding: 'utf8' });
+  assert.ok(help.includes('Python 3.9+')); assert.ok(help.includes('--language en|ru')); assert.ok(help.includes('config.json'));
 });

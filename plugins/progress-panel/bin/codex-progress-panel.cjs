@@ -19,9 +19,11 @@ if (process.platform !== 'darwin' && process.platform !== 'linux') {
   process.stdout.write(`${version}\n`);
 } else if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
   process.stdout.write(`codex-progress-panel ${version} — stdio MCP server
-Usage: codex-progress-panel [--data-dir /absolute/private/directory]
+Usage: codex-progress-panel [--data-dir /absolute/private/directory] [--language en|ru]
 Requires macOS/Linux, Node.js 22+, and Python 3.9+ as python3 in PATH.
 The default private state directory is ~/.codex-progress-panel.
+UI language defaults to English. A private <data-dir>/config.json can set {"language":"ru"}.
+--language en|ru overrides and skips that file; language is fixed when the server starts.
 All server arguments are forwarded unchanged. No Python download or setup occurs.
 `);
 } else {
