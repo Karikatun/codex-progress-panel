@@ -64,6 +64,7 @@ class Client:
         self.process = subprocess.Popen([sys.executable, "-B", str(SERVER), "--data-dir", str(data)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
         self.next_id = 1
+        self.tool_calls = []
         self.selector = selectors.DefaultSelector()
         self.selector.register(self.process.stdout, selectors.EVENT_READ)
 
@@ -92,6 +93,7 @@ class Client:
         self.tool_schemas = {t["name"]: t["outputSchema"] for t in self.request("tools/list")["result"]["tools"]}
 
     def call(self, name, arguments):
+        self.tool_calls.append(name)
         result = self.request("tools/call", {"name": name, "arguments": arguments})["result"]
         if not result.get("isError"):
             assert_schema(result["structuredContent"], self.tool_schemas[name])
@@ -255,6 +257,7 @@ class ProtocolTests(unittest.TestCase):
         read = self.client.call("open_progress_panel", {"task_id": "task-a", "read_token": a["read_token"]})["_meta"]["read_token"]
         for name, args in [
             ("get_progress", {"task_id": "task-b", "read_token": read}),
+            ("get_progress", {"task_id": "task-a", "read_token": a["write_token"]}),
             ("open_progress_panel", {"task_id": "task-b", "read_token": a["read_token"]}),
             ("open_progress_panel", {"task_id": "task-a", "write_token": a["write_token"]}),
             ("open_progress_panel", {"task_id": "task-a", "read_token": a["write_token"]}),
@@ -268,6 +271,12 @@ class ProtocolTests(unittest.TestCase):
         descriptors = self.client.request("tools/list")["result"]["tools"]
         self.assertTrue(all("outputSchema" in item for item in descriptors))
         opener = next(t for t in descriptors if t["name"] == "open_progress_panel")
+        reader = next(t for t in descriptors if t["name"] == "get_progress")
+        self.assertEqual(reader["_meta"]["ui"]["visibility"], ["model", "app"])
+        self.assertNotIn("resourceUri", reader["_meta"]["ui"])
+        self.assertTrue(reader["annotations"]["readOnlyHint"])
+        self.assertEqual(set(reader["inputSchema"]["properties"]), {"task_id", "read_token"})
+        self.assertEqual(set(reader["inputSchema"]["required"]), {"task_id", "read_token"})
         self.assertEqual(set(opener["inputSchema"]["properties"]), {"task_id", "read_token"})
         empty = self.client.call("open_progress_panel", {})
         self.assertEqual(empty["structuredContent"], {"state": None})
@@ -278,6 +287,8 @@ class ProtocolTests(unittest.TestCase):
         self.assertNotIn(created["write_token"], json.dumps({"arguments": opening_args, "result": opened}))
         state = self.client.call("get_progress", opening_args)
         self.assertEqual(state["structuredContent"], opened["structuredContent"])
+        self.assertEqual(state["_meta"], {})
+        self.assertNotIn(created["write_token"], json.dumps(state))
         with self.assertRaises(AssertionError):
             assert_schema({"state": created["state"], "write_token": created["write_token"]}, opener["outputSchema"])
         with self.assertRaises(AssertionError):
@@ -298,16 +309,27 @@ class ProtocolTests(unittest.TestCase):
             rejected = self.client.call("create_progress", {"task_id": "too-long-" + str(index), **fields})
             self.assertTrue(rejected["isError"])
 
-    def test_stale_compare_and_swap_across_two_processes(self):
+    def test_stale_update_and_finish_recover_by_read_without_reopening(self):
         created = self.create()
+        opening = {"task_id": "task-test", "read_token": created["read_token"]}
+        self.client.call("open_progress_panel", opening)
         other = self.start()
         args = {"task_id": "task-test", "write_token": created["write_token"], "expected_revision": 1, **self.fields()}
         self.assertEqual(self.client.call("update_progress", args)["structuredContent"]["state"]["revision"], 2)
-        stale = other.call("update_progress", args)
-        self.assertTrue(stale["isError"])
-        self.assertIn("Stale revision", stale["content"][0]["text"])
-        args["expected_revision"] = 2
-        self.assertEqual(other.call("update_progress", args)["structuredContent"]["state"]["revision"], 3)
+        for writer, name, expected in ((other, "update_progress", 3), (self.client, "finish_progress", 4)):
+            stale = writer.call(name, args)
+            self.assertTrue(stale["isError"])
+            self.assertIn("Stale revision", stale["content"][0]["text"])
+            current = writer.call("get_progress", opening)
+            self.assertEqual(current["_meta"], {})
+            self.assertNotIn(created["write_token"], json.dumps(current))
+            self.assertEqual(current["structuredContent"]["state"]["revision"], expected - 1)
+            args["expected_revision"] = current["structuredContent"]["state"]["revision"]
+            recovered = writer.call(name, args)["structuredContent"]["state"]
+            self.assertEqual(recovered["revision"], expected)
+            self.assertEqual(recovered["finalized"], name == "finish_progress")
+        self.assertEqual(sum(c.tool_calls.count("open_progress_panel") for c in self.clients), 1)
+        self.assertEqual(sum(c.tool_calls.count("get_progress") for c in self.clients), 2)
 
     def test_bounded_input_and_safe_xss_storage(self):
         xss = '<img src=x onerror="alert(1)"><script>alert(1)</script>'

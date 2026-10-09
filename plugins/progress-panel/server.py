@@ -215,9 +215,9 @@ class Store:
         try:
             old, _ = self.authenticated(args["task_id"], args["write_token"], write=True)
             if old["finalized"]:
-                raise Invalid("Task finalized; create a new execution")
+                raise Invalid("Task finalized; stop writing this execution")
             if old["revision"] != expected:
-                raise Invalid("Stale revision; reopen the authenticated task before updating")
+                raise Invalid("Stale revision; read the authenticated task with get_progress before retrying")
             timestamp = datetime.now(timezone.utc).isoformat()
             state.update(task_id=args["task_id"], revision=expected + 1, updated_at=timestamp,
                 finalized=finalize, finalized_at=timestamp if finalize else None)
@@ -278,7 +278,7 @@ TOOLS = [
             "expected_revision": {"type": "integer", "minimum": 1, "maximum": 2**53-2}, **FIELDS},
             ("task_id", "write_token", "expected_revision", "title", "stages")), STATE_RESULT, False, {"ui": {"visibility": ["model"]}}),
     tool("get_progress", "Read exactly one panel task using its read capability; no listing or writes.",
-        schema({"task_id": ID_SCHEMA, "read_token": TOKEN_SCHEMA}, ("task_id", "read_token")), STATE_RESULT, True, {"ui": {"visibility": ["app"]}}),
+        schema({"task_id": ID_SCHEMA, "read_token": TOKEN_SCHEMA}, ("task_id", "read_token")), STATE_RESULT, True, {"ui": {"visibility": ["model", "app"]}}),
 ]
 
 

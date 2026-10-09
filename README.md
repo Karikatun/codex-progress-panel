@@ -37,9 +37,11 @@ Example request: **«Покажи этапы работы в панели и о�
 | `open_progress_panel` | Read token | Opens that execution's snapshot and passes only the read token to its UI |
 | `update_progress` | Write token + expected revision | Atomically replaces the complete snapshot |
 | `finish_progress` | Write token + expected revision | Atomically stores and irrevocably freezes the final snapshot |
-| `get_progress` | Read token | Reads only that execution; offered to the UI |
+| `get_progress` | Read token | Reads only that execution; available to the model and UI without rendering another widget |
 
-Create and open, then update at meaningful milestones. Before the final response, finish with the complete actual snapshot. The display stops polling after observing `finalized: true`, fixes its final timestamp, and ignores later results. Reopening a finalized execution reads the same history. Each widget binds to its first execution once. A new user message uses a fresh id and a new widget even when continuing the same project.
+Create and open once, then update at meaningful milestones. Before the final response, finish with the complete actual snapshot. The display stops polling after observing `finalized: true`, fixes its final timestamp, and ignores later results. Each widget binds to its first execution once. A new user message uses a fresh id and a new widget even when continuing the same project.
+
+Recover a stale update or finish revision through `get_progress` with the retained task id and read token, reconcile with actual work, and retry the intended write once with the returned revision. If already finalized, stop writing. Recovery never calls `open_progress_panel`. If tokens or current-execution tracking are lost, stop panel updates and report the limitation; continue with text progress without creating a replacement execution or another widget in that execution. A failed or unconfirmed finish does not establish a frozen snapshot.
 
 For example, `create_progress` arguments can be:
 
@@ -85,7 +87,7 @@ Distribute only the reviewed repository source or the complete plugin directory 
 
 ## Native acceptance before activation is considered verified
 
-On a host with the reviewed candidate installed, use two separate user turns to create executions A and B. Confirm two inline widgets appear in their respective responses. Finish A, then create/update B and reopen/read A: A must retain its final stages and timestamp. Confirm A no longer polls after finalization, including hide/show and delayed replies. Interrupt a third execution before finish and confirm it remains unfinished; automatic interruption detection is not supported. Also check narrow layout, light/dark theme and screen-reader announcements. Record the host version and actual observations. This checklist has not established a native PASS.
+On a host with the reviewed candidate installed, use two separate user turns to create executions A and B. Confirm two inline widgets appear in their respective responses. Finish A, then create/update B and read A through `get_progress` without opening another widget: A must retain its final stages and timestamp. Confirm A no longer polls after finalization, including hide/show and delayed replies. Interrupt a third execution before finish and confirm it remains unfinished; automatic interruption detection is not supported. Also check narrow layout, light/dark theme and screen-reader announcements. Record the host version and actual observations. This checklist has not established a native PASS.
 
 ## Update and uninstall
 
