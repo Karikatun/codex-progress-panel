@@ -76,9 +76,9 @@ async function deadline(promise, ms = 8000) {
   try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('process exit deadline')), ms); })]); }
   finally { clearTimeout(timer); }
 }
-function fromNpm(data, cacheName) {
+function fromNpm(data, cacheName, options = {}) {
   return start('npm', ['exec', '--offline', '--yes', '--ignore-scripts', `--package=${tarball}`, '--', 'codex-progress-panel', '--data-dir', data],
-    { env: npmEnvironment(path.join(area, cacheName)) });
+    { env: npmEnvironment(path.join(area, cacheName)), ...options });
 }
 function pids() {
   return execFileSync('ps', ['-axo', 'pid=,ppid='], { encoding: 'utf8' }).trim().split('\n').map(line => line.trim().split(/\s+/).map(Number));
@@ -212,13 +212,65 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
   });
 }
 
-for (const signal of ['SIGINT', 'SIGTERM']) {
-  test(`real offline npm exec ${signal} shuts down its launcher and Python child`, async () => {
-    const client = fromNpm(path.join(area, `npm-${signal}`), `signal cache ${signal}`);
-    await client.initialize(); const children = descendants(client.proc.pid); assert.ok(children.length >= 2);
-    client.proc.kill(signal); const exit = await deadline(client.exit);
+async function checkNpmSignal(signal, initialize = client => client.initialize(), options = {}) {
+  const terminal = signal === 'SIGINT';
+  // npm signals its immediate shell child. Linux sh may wait through a PID-only
+  // SIGINT; terminal Ctrl-C reaches the whole foreground process group instead.
+  // detached gives this test its own group without signaling the test runner.
+  const client = fromNpm(path.join(area, `npm-${signal}`), `signal cache ${signal}`, { ...options, detached: terminal });
+  let children = [];
+  try {
+    await initialize(client); children = descendants(client.proc.pid); assert.ok(children.length >= 2);
+    if (terminal) process.kill(-client.proc.pid, signal); else client.proc.kill(signal);
+    const exit = await deadline(client.exit);
     assert.ok(exit.signal === signal || [1, 130, 143].includes(exit.code), JSON.stringify(exit));
     await waitGone(children); assert.equal(client.queue.length, 0);
+  } catch (error) {
+    if (terminal) {
+      // This group belongs only to this detached npm client, even when
+      // initialization failed before children were recorded or npm already exited.
+      try { process.kill(-client.proc.pid, 'SIGKILL'); } catch {}
+    } else {
+      // Snapshot while npm is still alive, before killing it can reparent children.
+      const owned = new Set(children);
+      try { for (const pid of descendants(client.proc.pid)) owned.add(pid); }
+      catch (cleanupError) { error.cause ??= cleanupError; }
+      for (const pid of [...owned].reverse()) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+      client.proc.kill('SIGKILL');
+    }
+    throw error;
+  }
+}
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  test(`real offline npm exec ${signal === 'SIGINT' ? 'terminal' : 'wrapper'} ${signal} shuts down its launcher and Python child`, () => checkNpmSignal(signal));
+  test(`real offline npm exec ${signal} failed initialization leaves no owned child processes`, async () => {
+    const rejection = new Error('client rejected initialized interpreter reply');
+    const blocked = fakePython(`blocked initializing interpreter ${signal}`, `
+      require('node:readline').createInterface({input:process.stdin}).on('line', line => {
+        const request=JSON.parse(line);
+        if(request.method==='initialize') console.log(JSON.stringify({jsonrpc:'2.0',id:request.id,result:{serverInfo:{name:'codex-progress-panel',version:'0.1.0'}}}));
+      });
+      setInterval(()=>{},1000);
+    `);
+    const options = { env: { ...npmEnvironment(path.join(area, `signal cache ${signal}`)), PATH: blocked + path.delimiter + process.env.PATH } };
+    let witness, owned = [], gone = false;
+    try {
+      await assert.rejects(checkNpmSignal(signal, async client => {
+        witness = client;
+        await client.initialize();
+        owned = descendants(client.proc.pid); assert.ok(owned.length >= 2);
+        // Reject at the client boundary before the shutdown helper records children.
+        throw rejection;
+      }, options), error => error === rejection);
+      await waitGone(owned); gone = true;
+    } finally {
+      // Keep even the deliberately failing regression probe confined to its own tree.
+      if (!gone) {
+        for (const pid of owned.reverse()) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+        if (witness) witness.proc.kill('SIGKILL');
+      }
+    }
   });
 }
 
