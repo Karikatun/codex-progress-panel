@@ -8,7 +8,7 @@ The server uses Python's standard library and SQLite. It has no network listener
 
 - macOS or Linux, Python 3.9+ available as `python3` in the host's PATH.
 - A Codex host that supports local plugins, plugin-relative MCP `cwd`, and MCP Apps UI. Native rendering and exact inline placement must be checked on your host; protocol and mock tests do not establish them.
-- Node.js 22+ for the bridge tests only. Node is not a runtime dependency.
+- Node.js 22+ and npm/npx for the optional npm launcher and test suite. The repository-local full plugin launches Python directly.
 
 Windows is not supported by this version: private-state ownership and permissions use POSIX facilities.
 
@@ -28,6 +28,16 @@ codex plugin list --json
 If your CLI lacks these commands, use the desktop host's supported local marketplace installation flow. Do not edit unrelated configuration to make an older CLI accept it. Start a new chat after installation so it discovers the plugin's skill and tools. A host restart, when required by its installation flow, should wait until running work is safely preserved.
 
 Example request: **«Покажи этапы работы в панели и обновляй её по мере выполнения задачи.»** The skill creates a fresh UUID for each response execution and opens one widget early. Tool calls and intermediate commentary continue that same widget.
+
+## npm/npx distribution
+
+The package name is exactly `codex-progress-panel`, version `0.1.0`. It has no third-party runtime dependencies, lifecycle scripts or interpreter installer. Node 22 is the supported/tested launcher baseline. Python remains the runtime for storage and MCP behavior.
+
+After publication, configure a stdio MCP server with `command: "npx"` and `args: ["-y", "codex-progress-panel@0.1.0"]`. Append `--data-dir` and its absolute path as separate arguments if desired. `npx -y codex-progress-panel@0.1.0 --help` explains the prerequisites. This installs the MCP server path; the full skill/plugin requires a marketplace installation.
+
+`plugins/progress-panel` is also the npm package root. The tarball includes the full plugin, launcher, skill and license through an explicit allowlist. Codex npm plugin installation skips lifecycle/dependency installation, so every required asset ships ready to use. The existing `.agents/plugins/marketplace.json` keeps its local source. The release variant [distribution/marketplace.npm.json](distribution/marketplace.npm.json) pins the same package and version from npm. Supply that reviewed variant through the host's supported marketplace flow after publication; npm is required on that host. Registry installation and native UI through the npm source have not been verified yet.
+
+Package updates or npm cache removal leave `~/.codex-progress-panel` intact. Update the exact version only after reviewing the release; remove the MCP entry/plugin through the host's supported flow. No global installation or automatic configuration write is needed.
 
 ## Tools and lifecycle
 
@@ -79,11 +89,26 @@ From the repository root:
 ```sh
 python3 -B -m unittest discover -s tests -v
 node tests/test_bridge.cjs
+node --test tests/test_npm.cjs
 ```
 
-Python tests use real stdio, SQLite, restart, unauthorized capabilities, stale revisions, a two-process finish/update race and independent sequential executions. Packaging tests launch a copied plugin directory with spaces from its manifest and isolated temporary state. Node executes the shipped script in a functional DOM/bridge mock. These are local protocol and lifecycle checks, not native host, rendered accessibility, geometry, or cross-platform proof. CI is configured for macOS/Linux and Python 3.9/3.13; a workflow file alone does not establish a successful remote run.
+Python tests use real stdio, SQLite, restart, unauthorized capabilities, stale revisions, a two-process finish/update race and independent sequential executions. Packaging tests launch a copied plugin directory with spaces from its manifest and isolated temporary state. Node executes the shipped script in a functional DOM/bridge mock. npm tests pack the real allowlisted tarball outside the repository, execute it via offline npm exec in isolated caches, and test stdout purity, argument forwarding, Python prerequisite failures, restart/finalization persistence and process shutdown. These are local protocol and lifecycle checks, not native host, rendered accessibility, geometry, or cross-platform proof. CI is configured for macOS/Linux and Python 3.9/3.13; a workflow file alone does not establish a successful remote run.
 
 Distribute only the reviewed repository source or the complete plugin directory with its license. Exclude `.git`, private databases, SQLite sidecars, capability tokens, environment files, logs, bytecode, caches and local evidence. No public plugin-directory submission, signature or host verification is implied by this repository.
+
+## npm release check (publication requires separate authorization)
+
+Run all checks above. Create the tarball outside the repository and inspect its exact contents, size and integrity before publishing:
+
+```sh
+release_dir="$(mktemp -d)"
+npm pack ./plugins/progress-panel --ignore-scripts --pack-destination "$release_dir" --json
+tar -tzf "$release_dir/codex-progress-panel-0.1.0.tgz"
+```
+
+Expected payload: package.json, README.md, LICENSE, bin/codex-progress-panel.cjs, server.py, panel.html, plugin.json, mcp.json and skills/progress-panel/SKILL.md. No databases, sidecars, logs, environment files, caches, tests or repository controls belong in it. The npm tests check this exact closure and execute their own packed artifact with scripts disabled and an isolated offline cache. Preserve the reviewed tarball and its SHA-256 as the release candidate.
+
+Only after explicit publication authorization, publish that exact reviewed tarball with `npm publish /absolute/path/codex-progress-panel-0.1.0.tgz --access public --ignore-scripts`. Publishing, public registry smoke, remote CI, tags and host activation are separate gates; no command in this preparation establishes them. Check package/plugin/marketplace version agreement before each release, then test the published exact version and npm full-plugin native UI in an isolated host.
 
 ## Native acceptance before activation is considered verified
 

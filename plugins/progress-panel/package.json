@@ -1,0 +1,45 @@
+{
+  "name": "codex-progress-panel",
+  "version": "0.1.0",
+  "description": "Local Codex progress snapshots with a read-only MCP App.",
+  "license": "MIT",
+  "author": "Karikatun",
+  "homepage": "https://github.com/Karikatun/codex-progress-panel",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Karikatun/codex-progress-panel.git",
+    "directory": "plugins/progress-panel"
+  },
+  "bugs": {
+    "url": "https://github.com/Karikatun/codex-progress-panel/issues"
+  },
+  "bin": {
+    "codex-progress-panel": "bin/codex-progress-panel.cjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "files": [
+    "bin/codex-progress-panel.cjs",
+    "server.py",
+    "panel.html",
+    "plugin.json",
+    "mcp.json",
+    "skills/progress-panel/SKILL.md",
+    "LICENSE",
+    "README.md"
+  ],
+  "keywords": [
+    "codex",
+    "mcp",
+    "mcp-app",
+    "progress"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
