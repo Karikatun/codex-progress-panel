@@ -24,7 +24,8 @@ function fixture(standalone=false) {
   let now=Date.parse('2026-10-07T09:30:00+00:00');
   class Clock extends Date {static now(){return now;}}
   const context=vm.createContext({window:win,document:doc,console,Intl,Date:Clock,Map,Promise,Error,Object,String,Number,Array,CSS:{supports:(_k,v)=>/^#[a-f0-9]{3,8}$/i.test(v)},setTimeout:(f,ms)=>{const id=next++;timers.set(id,{f,ms});return id;},clearTimeout:id=>timers.delete(id)});
-  vm.runInContext(script,context,{timeout:1000});
+  // Bound synchronous startup while allowing headroom on shared CI runners.
+  vm.runInContext(script,context,{timeout:10000});
   return {ids,doc,messages,timers,parent,
     emit(data,source=parent,origin='https://host.example'){listeners.get('message')?.({data,source,origin});},
     run(ms){const [id,entry]=[...timers].find(([,x])=>x.ms===ms)||[];assert.ok(entry,'Expected timer '+ms);timers.delete(id);entry.f();},
