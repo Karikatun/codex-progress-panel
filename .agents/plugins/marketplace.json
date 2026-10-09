@@ -1,0 +1,17 @@
+{
+  "name": "codex-progress-panel",
+  "plugins": [
+    {
+      "name": "codex-progress-panel",
+      "source": {
+        "source": "local",
+        "path": "./plugins/progress-panel"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Этапы задачи</title>
+<style>
+:root{color-scheme:light dark;--ink:#202322;--muted:#545d58;--paper:#fff;--line:#dce1dd;--accent:#136343;--soft:#eaf4ed;--warn:#854200;--warn-soft:#fff4e5}
+:root[data-theme=dark]{--ink:#e7ece8;--muted:#b6c1b9;--paper:#1b211d;--line:#3c4940;--accent:#a0d7b5;--soft:#253e2e;--warn:#f5c089;--warn-soft:#493522}
+*{box-sizing:border-box}body{margin:0;background-color:var(--color-background-primary,var(--paper));color:var(--color-text-primary,var(--ink));font:14px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow-wrap:anywhere}
+main{padding:22px 20px;max-width:680px;margin:auto}.eyebrow{color:var(--color-text-secondary,var(--muted));font-size:11px;letter-spacing:.08em;text-transform:uppercase;font-weight:650;margin:0 0 7px}
+h1{font-size:20px;line-height:1.3;letter-spacing:-.02em;font-weight:650;margin:0 0 18px;text-wrap:balance}.connection{font-size:12px;color:var(--color-text-secondary,var(--muted));margin:0 0 16px;min-height:18px}.connection[data-kind=error]{color:var(--warn)}
+.current{border-left:3px solid var(--accent);padding:2px 0 2px 12px;margin:0 0 20px}.current-label{font-size:11px;color:var(--color-text-secondary,var(--muted));margin:0 0 4px}.current p:last-child{margin:0;white-space:pre-wrap}
+.blocker{background-color:var(--warn-soft);color:var(--warn);padding:12px 14px;margin:0 0 20px;border-radius:6px}.blocker strong{display:block;font-size:12px;margin-bottom:3px}.blocker p{margin:0;white-space:pre-wrap}
+.freshness{color:var(--warn);font-size:12px;line-height:1.5;margin:18px 0 0}
+ol{margin:0;padding:0;list-style:none}li{display:grid;grid-template-columns:24px minmax(0,1fr);column-gap:12px;position:relative;padding:0 0 22px}li:not(:last-child):before{content:"";position:absolute;left:11px;top:27px;bottom:4px;border-left:1px solid var(--color-border-primary,var(--line))}li:last-child{padding-bottom:0}
+.mark{width:24px;height:24px;display:grid;place-items:center;border:1px solid var(--color-border-primary,var(--line));border-radius:50%;font-size:11px;font-variant-numeric:tabular-nums;color:var(--color-text-secondary,var(--muted));background-color:var(--color-background-primary,var(--paper))}
+li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft);border-color:transparent}li[data-status=running] .mark{border:2px solid var(--accent);color:var(--accent);font-weight:700}li[data-status=blocked] .mark{border-color:var(--warn);color:var(--warn)}
+.stage-top{display:flex;align-items:baseline;gap:6px 12px;flex-wrap:wrap}.stage-title{font-size:14px;font-weight:600;margin:1px 0 0}.stage-status{font-size:11px;color:var(--color-text-secondary,var(--muted))}li[data-status=running] .stage-status{color:var(--accent);font-weight:600}li[data-status=blocked] .stage-status{color:var(--warn)}
+.stage-detail{margin:5px 0 0;color:var(--color-text-secondary,var(--muted));font-size:12px;white-space:pre-wrap}.actor{margin:4px 0 0;font-size:11px;color:var(--color-text-secondary,var(--muted))}footer{border-top:1px solid var(--color-border-primary,var(--line));padding-top:12px;margin-top:22px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;color:var(--color-text-secondary,var(--muted));font-size:11px;font-variant-numeric:tabular-nums}
+.empty{color:var(--color-text-secondary,var(--muted));line-height:1.6;margin:24px 0 12px}.empty strong{color:var(--color-text-primary,var(--ink));font-weight:600;display:block;margin-bottom:6px}[hidden]{display:none!important}::selection{background-color:var(--soft);color:var(--ink)}*{scrollbar-color:var(--line) transparent;scrollbar-width:thin}a{color:var(--accent);text-underline-offset:3px}a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+@media(max-width:340px){main{padding:18px 14px}h1{font-size:18px}li{column-gap:9px}.stage-top{gap:3px 8px}}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--ink:#e7ece8;--muted:#b6c1b9;--paper:#1b211d;--line:#3c4940;--accent:#a0d7b5;--soft:#253e2e;--warn:#f5c089;--warn-soft:#493522}}
+</style>
+</head>
+<body>
+<main aria-label="Ход работы">
+<p class="eyebrow">Ход работы</p>
+<h1 id="title">Этапы задачи</h1>
+<p id="connection" class="connection" role="status" aria-live="polite">Подключение к панели…</p>
+<div id="empty" class="empty" hidden><strong>План ещё не привязан</strong>После открытия панели для этой задачи здесь появятся этапы и текущая работа.</div>
+<section id="current" class="current" aria-label="Текущая работа" hidden><p class="current-label">Сейчас</p><p id="current-text"></p></section>
+<aside id="blocker" class="blocker" aria-label="Препятствие" hidden><strong>Работа приостановлена</strong><p id="blocker-text"></p></aside>
+<ol id="stages" aria-label="Этапы"></ol>
+<p id="freshness" class="freshness" role="status" aria-live="polite" hidden></p>
+<footer id="footer" hidden><span id="actor"></span><span id="updated"></span></footer>
+</main>
+<script>
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const labels = {pending:'Ожидает',running:'В работе',blocked:'Приостановлен',completed:'Завершён'};
+  const idPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+  const pending = new Map();
+  let nextId = 1, hostOrigin = '*', connected = false, closed = false;
+  let state = null, taskId = null, readToken = null, timer = null, failures = 0, pollInFlight = false;
+  const clockFormat = new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  const relativeFormat = new Intl.RelativeTimeFormat('ru-RU',{numeric:'always'});
+  const staleAfterSeconds = 120;
+
+  function connection(message, kind = '') {
+    $('connection').textContent = message;
+    $('connection').dataset.kind = kind;
+  }
+  function send(message) {
+    if (closed) return;
+    window.parent.postMessage(message, hostOrigin);
+  }
+  function request(method, params) {
+    return new Promise((resolve,reject) => {
+      if (closed) { reject(new Error('Панель закрыта')); return; }
+      const id = nextId++;
+      const timeout = setTimeout(() => {pending.delete(id);reject(new Error('Нет ответа от приложения'));},4000);
+      pending.set(id,{resolve,reject,timeout});
+      send({jsonrpc:'2.0',id,method,params});
+    });
+  }
+  function validText(v, max) {return typeof v === 'string' && v.length <= max * 2 && Array.from(v).length <= max;}
+  function validState(s) {
+    return s && idPattern.test(s.task_id) && Number.isSafeInteger(s.revision) && s.revision > 0
+      && validText(s.title,240) && validText(s.current,600) && validText(s.blocker,600)
+      && typeof s.finalized === 'boolean'
+      && (s.finalized ? validText(s.finalized_at,40) && s.finalized_at === s.updated_at : s.finalized_at === null)
+      && validText(s.actor,600) && validText(s.updated_at,40) && Number.isFinite(Date.parse(s.updated_at))
+      && Array.isArray(s.stages) && s.stages.length > 0 && s.stages.length <= 32
+      && s.stages.every(x => x && idPattern.test(x.id) && validText(x.title,240)
+        && Object.prototype.hasOwnProperty.call(labels,x.status) && validText(x.actor,160) && validText(x.detail,600));
+  }
+  function render(s) {
+    $('title').textContent = s.title;
+    $('empty').hidden = true;
+    $('current').hidden = !s.current;
+    $('current-text').textContent = s.current;
+    $('blocker').hidden = !s.blocker;
+    $('blocker-text').textContent = s.blocker;
+    const list = document.createDocumentFragment();
+    s.stages.forEach((stage,index) => {
+      const row = document.createElement('li');row.dataset.status = stage.status;
+      const mark = document.createElement('span');mark.className = 'mark';mark.setAttribute('aria-hidden','true');
+      mark.textContent = stage.status === 'completed' ? '✓' : stage.status === 'blocked' ? '!' : String(index + 1);
+      const body = document.createElement('div');
+      const top = document.createElement('div');top.className = 'stage-top';
+      const title = document.createElement('p');title.className = 'stage-title';title.textContent = stage.title;
+      const status = document.createElement('span');status.className = 'stage-status';status.textContent = labels[stage.status];
+      top.append(title,status);body.append(top);
+      if (stage.detail) {const detail=document.createElement('p');detail.className='stage-detail';detail.textContent=stage.detail;body.append(detail);}
+      if (stage.actor) {const actor=document.createElement('p');actor.className='actor';actor.textContent=stage.actor;body.append(actor);}
+      row.append(mark,body);list.append(row);
+    });
+    $('stages').replaceChildren(list);
+    $('actor').textContent = s.actor || 'Исполнитель не указан';
+    $('footer').hidden = false;
+  }
+  function freshness() {
+    if (!state || closed) return;
+    if (state.finalized) {
+      $('updated').textContent='Зафиксировано · '+clockFormat.format(new Date(state.finalized_at));
+      $('updated').title=state.finalized_at;
+      $('freshness').hidden=true;$('freshness').textContent='';return;
+    }
+    const seconds=Math.max(0,Math.floor((Date.now()-Date.parse(state.updated_at))/1000));
+    const unit=seconds<60?'second':seconds<3600?'minute':seconds<86400?'hour':'day';
+    const divisor={second:1,minute:60,hour:3600,day:86400}[unit];
+    $('updated').textContent='Обновлено '+relativeFormat.format(-Math.floor(seconds/divisor),unit)+' · '+clockFormat.format(new Date(state.updated_at));
+    $('updated').title=state.updated_at;
+    const active=state.stages.some(stage=>stage.status==='running'||stage.status==='blocked');
+    const stale=active&&seconds>=staleAfterSeconds;
+    $('freshness').hidden=!stale;
+    $('freshness').textContent=stale?'Этапы не обновлялись 2 минуты или дольше. Работа может продолжаться.':'';
+  }
+  function accept(result) {
+    if (closed || state?.finalized) return;
+    if (!result || result.isError) throw new Error('Не удалось получить этапы');
+    const incoming = result.structuredContent?.state;
+    if (incoming === null && !state) {$('empty').hidden=false;connection('Ожидание плана');return;}
+    if (!validState(incoming)) throw new Error('Приложение вернуло некорректные этапы');
+    if (taskId && taskId !== incoming.task_id) return; // Never switch to an unrelated task notification.
+    if (state && incoming.revision < state.revision) return; // Stale replies cannot affect state or transport recovery.
+    if (!state || incoming.revision > state.revision) {
+      taskId = incoming.task_id;
+      const capability = result._meta?.read_token;
+      if (typeof capability === 'string' && /^[a-f0-9]{64}$/.test(capability)) readToken=capability;
+      render(incoming);state=incoming;
+    } // Same-revision success recovers transport without rewriting the snapshot.
+    if (failures && timer !== null) {clearTimeout(timer);timer=null;}
+    failures=0;
+    freshness();
+    if (state.finalized) {
+      clearTimeout(timer);timer=null;
+      for (const entry of pending.values()) {clearTimeout(entry.timeout);entry.reject(new Error('Итог зафиксирован'));}
+      pending.clear();
+      connection('Итог выполнения зафиксирован');return;
+    }
+    connection(readToken ? 'Связь с приложением установлена' : 'Получен снимок; живое обновление недоступно',readToken?'':'error');
+    schedule();
+  }
+  function schedule() {
+    if (timer !== null || pollInFlight || closed || state?.finalized || !connected || !readToken || document.hidden) return;
+    timer=setTimeout(poll, failures ? Math.min(15000,2500 * 2**failures) : 2500);
+  }
+  async function poll() {
+    timer=null;
+    if (pollInFlight || closed || state?.finalized || !connected || !readToken || document.hidden) return;
+    pollInFlight=true;
+    try {accept(await request('tools/call',{name:'get_progress',arguments:{task_id:taskId,read_token:readToken}}));}
+    catch (_) {if (closed || state?.finalized) return;failures=Math.min(failures+1,3);freshness();connection('Связь прервалась. Повторное подключение…','error');}
+    finally {pollInFlight=false;schedule();}
+  }
+  function context(ctx) {
+    if (!ctx || typeof ctx !== 'object') return;
+    if (ctx.theme === 'light' || ctx.theme === 'dark') document.documentElement.dataset.theme=ctx.theme;
+    const vars=ctx.styles?.variables;
+    const allowed=['--color-text-primary','--color-text-secondary','--color-background-primary','--color-border-primary'];
+    if (vars && typeof vars === 'object') for (const key of allowed) {
+      const value=vars[key];
+      if (typeof value === 'string' && value.length < 100 && CSS.supports('color',value)) document.documentElement.style.setProperty(key,value);
+    }
+  }
+  function cleanup() {
+    closed=true;clearTimeout(timer);timer=null;
+    for (const entry of pending.values()) {clearTimeout(entry.timeout);entry.reject(new Error('Панель закрыта'));}
+    pending.clear();window.removeEventListener('message',onMessage);
+  }
+  function onMessage(event) {
+    if (event.source !== window.parent || closed) return;
+    if (hostOrigin !== '*' && event.origin !== hostOrigin) return;
+    const m=event.data;
+    if (!m || m.jsonrpc !== '2.0') return;
+    const owns = key => Object.prototype.hasOwnProperty.call(m,key);
+    const response = !owns('method') && (owns('result') !== owns('error'));
+    if (response && pending.has(m.id)) {
+      const entry=pending.get(m.id);pending.delete(m.id);clearTimeout(entry.timeout);
+      if (m.error) entry.reject(new Error('Приложение отклонило запрос'));
+      else {if (hostOrigin === '*' && event.origin && event.origin !== 'null') hostOrigin=event.origin;entry.resolve(m.result);}
+      return;
+    }
+    if (!connected) return;
+    if (m.method === 'ui/notifications/tool-result') {
+      try {accept(m.params);} catch (_) {if (state?.finalized) return;connection('Не удалось прочитать этапы. Ожидание следующего обновления…','error');}
+    } else if (m.method === 'ui/notifications/host-context-changed') context(m.params);
+    else if (m.method === 'ping' && m.id !== undefined) send({jsonrpc:'2.0',id:m.id,result:{}});
+    else if (m.method === 'ui/resource-teardown') {send({jsonrpc:'2.0',id:m.id,result:{}});cleanup();}
+  }
+  window.addEventListener('message',onMessage);
+  window.addEventListener('pagehide',cleanup,{once:true});
+  document.addEventListener('visibilitychange',() => {
+    if (document.hidden) {clearTimeout(timer);timer=null;} else schedule();
+  });
+  if (window.parent === window) {
+    connection('Панель доступна внутри приложения с поддержкой MCP Apps. Обычный браузер не подключён.','error');
+    $('empty').hidden=true;
+    return;
+  }
+  request('ui/initialize',{appInfo:{name:'codex-progress-panel',version:'0.1.0'},appCapabilities:{availableDisplayModes:['inline']},protocolVersion:'2026-01-26'})
+    .then(result => {if (!result || typeof result !== 'object') throw new Error('Нет моста');connected=true;context(result.hostContext);send({jsonrpc:'2.0',method:'ui/notifications/initialized',params:{}});connection('Ожидание плана');$('empty').hidden=true;})
+    .catch(() => {connection('Приложение не подключило панель. Откройте её снова через инструмент панели.','error');});
+})();
+</script>
+</body>
+</html>
