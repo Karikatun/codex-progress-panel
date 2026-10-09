@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Этапы задачи</title>
+<title>Task stages</title>
 <style>
 :root{color-scheme:light dark;--ink:#202322;--muted:#545d58;--paper:#fff;--line:#dce1dd;--accent:#136343;--soft:#eaf4ed;--warn:#854200;--warn-soft:#fff4e5}
 :root[data-theme=dark]{--ink:#e7ece8;--muted:#b6c1b9;--paper:#1b211d;--line:#3c4940;--accent:#a0d7b5;--soft:#253e2e;--warn:#f5c089;--warn-soft:#493522}
@@ -24,14 +24,14 @@ li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft)
 </style>
 </head>
 <body>
-<main aria-label="Ход работы">
-<p class="eyebrow">Ход работы</p>
-<h1 id="title">Этапы задачи</h1>
-<p id="connection" class="connection" role="status" aria-live="polite">Подключение к панели…</p>
-<div id="empty" class="empty" hidden><strong>План ещё не привязан</strong>После открытия панели для этой задачи здесь появятся этапы и текущая работа.</div>
-<section id="current" class="current" aria-label="Текущая работа" hidden><p class="current-label">Сейчас</p><p id="current-text"></p></section>
-<aside id="blocker" class="blocker" aria-label="Препятствие" hidden><strong>Работа приостановлена</strong><p id="blocker-text"></p></aside>
-<ol id="stages" aria-label="Этапы"></ol>
+<main id="main" aria-label="Work progress">
+<p id="eyebrow" class="eyebrow">Work progress</p>
+<h1 id="title">Task stages</h1>
+<p id="connection" class="connection" role="status" aria-live="polite">Connecting to the panel…</p>
+<div id="empty" class="empty" hidden><strong id="empty-title">No plan is linked yet</strong><span id="empty-text">Open the panel for this task to see its stages and current work.</span></div>
+<section id="current" class="current" aria-label="Current work" hidden><p id="current-label" class="current-label">Now</p><p id="current-text"></p></section>
+<aside id="blocker" class="blocker" aria-label="Blocker" hidden><strong id="blocker-title">Work is paused</strong><p id="blocker-text"></p></aside>
+<ol id="stages" aria-label="Stages"></ol>
 <p id="freshness" class="freshness" role="status" aria-live="polite" hidden></p>
 <footer id="footer" hidden><span id="actor"></span><span id="updated"></span></footer>
 </main>
@@ -39,13 +39,50 @@ li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft)
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const labels = {pending:'Ожидает',running:'В работе',blocked:'Приостановлен',completed:'Завершён'};
+  // The server fixes this language in the resource. Host/browser preferences never change an existing widget.
+  const language = document.documentElement.lang === 'ru' ? 'ru' : 'en';
+  document.documentElement.lang = language;
+  const strings = {
+    en: {
+      progress:'Work progress',title:'Task stages',connecting:'Connecting to the panel…',emptyTitle:'No plan is linked yet',
+      emptyText:'Open the panel for this task to see its stages and current work.',current:'Current work',now:'Now',
+      blocker:'Blocker',paused:'Work is paused',stages:'Stages',actorMissing:'Actor not specified',
+      labels:{pending:'Pending',running:'In progress',blocked:'Blocked',completed:'Completed'},
+      closed:'Panel closed',noReply:'No response from the host',fixed:'Finalized',updated:'Updated',
+      stale:'Stages have not been updated for 2 minutes or longer. Work may still be continuing.',
+      fetchFailed:'Could not get task stages',waiting:'Waiting for a plan',invalid:'The host returned invalid task stages',
+      finalized:'Execution result finalized',connected:'Connected to the host',snapshot:'Snapshot received; live updates unavailable',
+      reconnect:'Connection lost. Reconnecting…',rejected:'The host rejected the request',
+      readFailed:'Could not read task stages. Waiting for the next update…',
+      standalone:'This panel needs a host that supports MCP Apps. A standalone browser is not connected.',
+      noBridge:'No host bridge',unavailable:'The host did not connect the panel. Reopen it using the panel tool.'
+    },
+    ru: {
+      progress:'Ход работы',title:'Этапы задачи',connecting:'Подключение к панели…',emptyTitle:'План ещё не привязан',
+      emptyText:'После открытия панели для этой задачи здесь появятся этапы и текущая работа.',current:'Текущая работа',now:'Сейчас',
+      blocker:'Препятствие',paused:'Работа приостановлена',stages:'Этапы',actorMissing:'Исполнитель не указан',
+      labels:{pending:'Ожидает',running:'В работе',blocked:'Приостановлен',completed:'Завершён'},
+      closed:'Панель закрыта',noReply:'Нет ответа от приложения',fixed:'Зафиксировано',updated:'Обновлено',
+      stale:'Этапы не обновлялись 2 минуты или дольше. Работа может продолжаться.',
+      fetchFailed:'Не удалось получить этапы',waiting:'Ожидание плана',invalid:'Приложение вернуло некорректные этапы',
+      finalized:'Итог выполнения зафиксирован',connected:'Связь с приложением установлена',snapshot:'Получен снимок; живое обновление недоступно',
+      reconnect:'Связь прервалась. Повторное подключение…',rejected:'Приложение отклонило запрос',
+      readFailed:'Не удалось прочитать этапы. Ожидание следующего обновления…',
+      standalone:'Панель доступна внутри приложения с поддержкой MCP Apps. Обычный браузер не подключён.',
+      noBridge:'Нет моста',unavailable:'Приложение не подключило панель. Откройте её снова через инструмент панели.'
+    }
+  }[language];
+  const labels = strings.labels;
+  document.title = strings.title;
+  for (const [id,key] of [['eyebrow','progress'],['title','title'],['connection','connecting'],['empty-title','emptyTitle'],
+      ['empty-text','emptyText'],['current-label','now'],['blocker-title','paused']]) $(id).textContent=strings[key];
+  for (const [id,key] of [['main','progress'],['current','current'],['blocker','blocker'],['stages','stages']]) $(id).setAttribute('aria-label',strings[key]);
   const idPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
   const pending = new Map();
   let nextId = 1, hostOrigin = '*', connected = false, closed = false;
   let state = null, taskId = null, readToken = null, timer = null, failures = 0, pollInFlight = false;
-  const clockFormat = new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-  const relativeFormat = new Intl.RelativeTimeFormat('ru-RU',{numeric:'always'});
+  const clockFormat = new Intl.DateTimeFormat(language === 'ru' ? 'ru-RU' : 'en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'});
+  const relativeFormat = new Intl.RelativeTimeFormat(language === 'ru' ? 'ru-RU' : 'en-US',{numeric:'always'});
   const staleAfterSeconds = 120;
 
   function connection(message, kind = '') {
@@ -58,9 +95,9 @@ li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft)
   }
   function request(method, params) {
     return new Promise((resolve,reject) => {
-      if (closed) { reject(new Error('Панель закрыта')); return; }
+      if (closed) { reject(new Error(strings.closed)); return; }
       const id = nextId++;
-      const timeout = setTimeout(() => {pending.delete(id);reject(new Error('Нет ответа от приложения'));},4000);
+      const timeout = setTimeout(() => {pending.delete(id);reject(new Error(strings.noReply));},4000);
       pending.set(id,{resolve,reject,timeout});
       send({jsonrpc:'2.0',id,method,params});
     });
@@ -98,32 +135,32 @@ li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft)
       row.append(mark,body);list.append(row);
     });
     $('stages').replaceChildren(list);
-    $('actor').textContent = s.actor || 'Исполнитель не указан';
+    $('actor').textContent = s.actor || strings.actorMissing;
     $('footer').hidden = false;
   }
   function freshness() {
     if (!state || closed) return;
     if (state.finalized) {
-      $('updated').textContent='Зафиксировано · '+clockFormat.format(new Date(state.finalized_at));
+      $('updated').textContent=strings.fixed+' · '+clockFormat.format(new Date(state.finalized_at));
       $('updated').title=state.finalized_at;
       $('freshness').hidden=true;$('freshness').textContent='';return;
     }
     const seconds=Math.max(0,Math.floor((Date.now()-Date.parse(state.updated_at))/1000));
     const unit=seconds<60?'second':seconds<3600?'minute':seconds<86400?'hour':'day';
     const divisor={second:1,minute:60,hour:3600,day:86400}[unit];
-    $('updated').textContent='Обновлено '+relativeFormat.format(-Math.floor(seconds/divisor),unit)+' · '+clockFormat.format(new Date(state.updated_at));
+    $('updated').textContent=strings.updated+' '+relativeFormat.format(-Math.floor(seconds/divisor),unit)+' · '+clockFormat.format(new Date(state.updated_at));
     $('updated').title=state.updated_at;
     const active=state.stages.some(stage=>stage.status==='running'||stage.status==='blocked');
     const stale=active&&seconds>=staleAfterSeconds;
     $('freshness').hidden=!stale;
-    $('freshness').textContent=stale?'Этапы не обновлялись 2 минуты или дольше. Работа может продолжаться.':'';
+    $('freshness').textContent=stale?strings.stale:'';
   }
   function accept(result) {
     if (closed || state?.finalized) return;
-    if (!result || result.isError) throw new Error('Не удалось получить этапы');
+    if (!result || result.isError) throw new Error(strings.fetchFailed);
     const incoming = result.structuredContent?.state;
-    if (incoming === null && !state) {$('empty').hidden=false;connection('Ожидание плана');return;}
-    if (!validState(incoming)) throw new Error('Приложение вернуло некорректные этапы');
+    if (incoming === null && !state) {$('empty').hidden=false;connection(strings.waiting);return;}
+    if (!validState(incoming)) throw new Error(strings.invalid);
     if (taskId && taskId !== incoming.task_id) return; // Never switch to an unrelated task notification.
     if (state && incoming.revision < state.revision) return; // Stale replies cannot affect state or transport recovery.
     if (!state || incoming.revision > state.revision) {
@@ -137,11 +174,11 @@ li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft)
     freshness();
     if (state.finalized) {
       clearTimeout(timer);timer=null;
-      for (const entry of pending.values()) {clearTimeout(entry.timeout);entry.reject(new Error('Итог зафиксирован'));}
+      for (const entry of pending.values()) {clearTimeout(entry.timeout);entry.reject(new Error(strings.finalized));}
       pending.clear();
-      connection('Итог выполнения зафиксирован');return;
+      connection(strings.finalized);return;
     }
-    connection(readToken ? 'Связь с приложением установлена' : 'Получен снимок; живое обновление недоступно',readToken?'':'error');
+    connection(readToken ? strings.connected : strings.snapshot,readToken?'':'error');
     schedule();
   }
   function schedule() {
@@ -153,7 +190,7 @@ li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft)
     if (pollInFlight || closed || state?.finalized || !connected || !readToken || document.hidden) return;
     pollInFlight=true;
     try {accept(await request('tools/call',{name:'get_progress',arguments:{task_id:taskId,read_token:readToken}}));}
-    catch (_) {if (closed || state?.finalized) return;failures=Math.min(failures+1,3);freshness();connection('Связь прервалась. Повторное подключение…','error');}
+    catch (_) {if (closed || state?.finalized) return;failures=Math.min(failures+1,3);freshness();connection(strings.reconnect,'error');}
     finally {pollInFlight=false;schedule();}
   }
   function context(ctx) {
@@ -168,7 +205,7 @@ li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft)
   }
   function cleanup() {
     closed=true;clearTimeout(timer);timer=null;
-    for (const entry of pending.values()) {clearTimeout(entry.timeout);entry.reject(new Error('Панель закрыта'));}
+    for (const entry of pending.values()) {clearTimeout(entry.timeout);entry.reject(new Error(strings.closed));}
     pending.clear();window.removeEventListener('message',onMessage);
   }
   function onMessage(event) {
@@ -180,13 +217,13 @@ li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft)
     const response = !owns('method') && (owns('result') !== owns('error'));
     if (response && pending.has(m.id)) {
       const entry=pending.get(m.id);pending.delete(m.id);clearTimeout(entry.timeout);
-      if (m.error) entry.reject(new Error('Приложение отклонило запрос'));
+      if (m.error) entry.reject(new Error(strings.rejected));
       else {if (hostOrigin === '*' && event.origin && event.origin !== 'null') hostOrigin=event.origin;entry.resolve(m.result);}
       return;
     }
     if (!connected) return;
     if (m.method === 'ui/notifications/tool-result') {
-      try {accept(m.params);} catch (_) {if (state?.finalized) return;connection('Не удалось прочитать этапы. Ожидание следующего обновления…','error');}
+      try {accept(m.params);} catch (_) {if (state?.finalized) return;connection(strings.readFailed,'error');}
     } else if (m.method === 'ui/notifications/host-context-changed') context(m.params);
     else if (m.method === 'ping' && m.id !== undefined) send({jsonrpc:'2.0',id:m.id,result:{}});
     else if (m.method === 'ui/resource-teardown') {send({jsonrpc:'2.0',id:m.id,result:{}});cleanup();}
@@ -197,13 +234,13 @@ li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft)
     if (document.hidden) {clearTimeout(timer);timer=null;} else schedule();
   });
   if (window.parent === window) {
-    connection('Панель доступна внутри приложения с поддержкой MCP Apps. Обычный браузер не подключён.','error');
+    connection(strings.standalone,'error');
     $('empty').hidden=true;
     return;
   }
-  request('ui/initialize',{appInfo:{name:'codex-progress-panel',version:'0.1.0'},appCapabilities:{availableDisplayModes:['inline']},protocolVersion:'2026-01-26'})
-    .then(result => {if (!result || typeof result !== 'object') throw new Error('Нет моста');connected=true;context(result.hostContext);send({jsonrpc:'2.0',method:'ui/notifications/initialized',params:{}});connection('Ожидание плана');$('empty').hidden=true;})
-    .catch(() => {connection('Приложение не подключило панель. Откройте её снова через инструмент панели.','error');});
+  request('ui/initialize',{appInfo:{name:'codex-progress-panel',version:'0.1.1'},appCapabilities:{availableDisplayModes:['inline']},protocolVersion:'2026-01-26'})
+    .then(result => {if (!result || typeof result !== 'object') throw new Error(strings.noBridge);connected=true;context(result.hostContext);send({jsonrpc:'2.0',method:'ui/notifications/initialized',params:{}});connection(strings.waiting);$('empty').hidden=true;})
+    .catch(() => {connection(strings.unavailable,'error');});
 })();
 </script>
 </body>

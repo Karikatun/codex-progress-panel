@@ -13,7 +13,7 @@ import stat
 import sys
 from datetime import datetime, timezone
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 URI = "ui://progress/panel.html"
 MIME = "text/html;profile=mcp-app"
 MAX_LINE = 65536
@@ -283,8 +283,11 @@ TOOLS = [
 
 
 class Server:
-    def __init__(self, store):
+    def __init__(self, store, language="en"):
         self.store, self.initialized, self.ready = store, False, False
+        self.language = language
+        self.panel_html = Path(__file__).with_name("panel.html").read_text(encoding="utf-8").replace(
+            '<html lang="en">', '<html lang="{}">'.format(language), 1)
 
     def call(self, method, params):
         if method == "initialize":
@@ -305,7 +308,7 @@ class Server:
             return {"tools": TOOLS}
         if method == "resources/list":
             single_page_params(params)
-            return {"resources": [{"uri": URI, "name": "progress_panel", "title": "Этапы задачи", "mimeType": MIME}]}
+            return {"resources": [{"uri": URI, "name": "progress_panel", "title": "Task stages" if self.language == "en" else "Этапы задачи", "mimeType": MIME}]}
         if method == "resources/templates/list":
             single_page_params(params)
             return {"resourceTemplates": []}
@@ -314,7 +317,7 @@ class Server:
             if params["uri"] != URI:
                 raise Invalid("Unknown resource")
             return {"contents": [{"uri": URI, "mimeType": MIME,
-                "text": Path(__file__).with_name("panel.html").read_text(encoding="utf-8"),
+                "text": self.panel_html,
                 "_meta": {"ui": {"prefersBorder": True, "csp": {"connectDomains": [], "resourceDomains": [], "frameDomains": [], "baseUriDomains": []}}}}]}
         if method == "tools/call":
             protocol_params(params, ("name",), ("arguments",))
@@ -394,17 +397,54 @@ def invalid_constant(_):
     raise Invalid("Invalid JSON constant")
 
 
+def configured_language(data_dir, explicit):
+    """Read one bounded local preference; an explicit CLI value skips the file."""
+    if explicit is not None:
+        return explicit
+    directory = os.open(str(data_dir), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        try:
+            descriptor = os.open("config.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        except FileNotFoundError:
+            return "en"
+    finally:
+        os.close(directory)
+    with os.fdopen(descriptor, "rb") as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077 or info.st_nlink != 1:
+            raise Invalid("Unsafe language configuration")
+        raw = source.read(1025)
+    if len(raw) > 1024:
+        raise Invalid("Language configuration exceeds 1 KiB")
+    value = json.loads(raw.decode("utf-8"), object_pairs_hook=unique_pairs, parse_constant=invalid_constant)
+    exact_object(value, ("language",))
+    if value["language"] not in ("en", "ru"):
+        raise Invalid("Language must be en or ru")
+    return value["language"]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", default=str(Path.home() / ".codex-progress-panel"), help="Absolute private directory. Its parent must exist; symlinks are rejected.")
+    parser.add_argument("--language", choices=("en", "ru"), help="UI language. Overrides and skips <data-dir>/config.json; default: en.")
     args = parser.parse_args()
     os.umask(0o077)
     try:
-        store = Store(args.data_dir)
+        data_dir = private_directory(args.data_dir)
     except Exception:
         print("progress-panel: private data directory is unavailable or unsafe", file=sys.stderr)
         return 1
-    server = Server(store)
+    try:
+        language = configured_language(data_dir, args.language)
+    except Exception:
+        print('progress-panel: invalid config.json; use a private regular file with {"language":"en"} or {"language":"ru"}, or override with --language en|ru', file=sys.stderr)
+        return 1
+    try:
+        store = Store(data_dir)
+    except Exception:
+        print("progress-panel: private data directory is unavailable or unsafe", file=sys.stderr)
+        return 1
+    server = Server(store, language)
     try:
         while True:
             raw = sys.stdin.buffer.readline(MAX_LINE + 1)

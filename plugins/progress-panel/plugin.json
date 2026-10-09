@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "codex-progress-panel",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local progress snapshots per assistant execution with a read-only MCP App.",
   "license": "MIT",
   "homepage": "https://github.com/Karikatun/codex-progress-panel",

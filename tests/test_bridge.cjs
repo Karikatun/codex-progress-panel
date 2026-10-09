@@ -14,10 +14,11 @@ class Element {
   replaceChildren(...nodes) {this.children=[];this._text='';this.append(...nodes);}
   setAttribute(key,value) {this.attrs[key]=value;}
 }
-function fixture(standalone=false) {
+function fixture(standalone=false,language='en') {
   const ids={};for (const m of html.matchAll(/<[^>]*\bid="([^"]+)"[^>]*>/g)) {ids[m[1]]=new Element('element');ids[m[1]].hidden=/\bhidden\b/.test(m[0]);}
   const listeners=new Map(), docListeners=new Map(), messages=[], timers=new Map();let next=1;
   const doc={hidden:false,documentElement:new Element('html'),getElementById:id=>ids[id],createElement:tag=>new Element(tag),createDocumentFragment:()=>new Element('fragment'),addEventListener:(n,f)=>docListeners.set(n,f)};
+  doc.documentElement.lang=language;
   const parent={postMessage:(m,origin)=>messages.push({message:m,origin})};
   const win={parent,addEventListener:(n,f)=>listeners.set(n,f),removeEventListener:n=>listeners.delete(n)};
   if(standalone) win.parent=win;
@@ -80,18 +81,18 @@ async function tests() {
   await check('read capability missing exposes snapshot limitation',async()=>{
     const f=fixture();await connect(f);
     f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(sample(),false)});
-    assert.match(f.ids.connection.textContent,/живое обновление недоступно/);assert.equal(f.timers.size,0);
+    assert.match(f.ids.connection.textContent,/live updates unavailable/);assert.equal(f.timers.size,0);
   });
   await check('error reconnect preserves last stage and bounded retry',async()=>{
     const f=fixture();await connect(f);
     f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result()});f.run(2500);
     const call=f.messages.at(-1).message;
     f.emit({jsonrpc:'2.0',id:call.id,error:{code:-1,message:'no'}});await settle();
-    assert.match(f.ids.connection.textContent,/Повторное подключение/);assert.equal(f.ids.stages.children.length,2);
+    assert.match(f.ids.connection.textContent,/Reconnecting/);assert.equal(f.ids.stages.children.length,2);
     assert.equal([...f.timers.values()][0].ms,5000);
     f.run(5000);const retry=f.messages.at(-1).message;
     f.emit({jsonrpc:'2.0',id:retry.id,result:result(sample(2),false)});await settle();
-    assert.match(f.ids.connection.textContent,/установлена/);assert.equal([...f.timers.values()][0].ms,2500);
+    assert.match(f.ids.connection.textContent,/Connected/);assert.equal([...f.timers.values()][0].ms,2500);
   });
   await check('same-revision success recovers transport and base polling without rewriting snapshot',async()=>{
     const f=fixture();await connect(f);const original=sample(2);
@@ -99,11 +100,11 @@ async function tests() {
     const title=f.ids.title.textContent, stages=f.ids.stages.textContent, timestamp=f.ids.updated.title;
     f.run(2500);let call=f.messages.at(-1).message;
     f.emit({jsonrpc:'2.0',id:call.id,error:{code:-1,message:'disconnected'}});await settle();
-    assert.match(f.ids.connection.textContent,/Повторное подключение/);assert.equal([...f.timers.values()][0].ms,5000);
+    assert.match(f.ids.connection.textContent,/Reconnecting/);assert.equal([...f.timers.values()][0].ms,5000);
     f.run(5000);call=f.messages.at(-1).message;
     const changed=sample(2);changed.title='Changed';changed.stages[0].status='completed';changed.updated_at='2026-10-08T09:30:00+00:00';
     f.emit({jsonrpc:'2.0',id:call.id,result:result(changed,false)});await settle();
-    assert.match(f.ids.connection.textContent,/установлена/);assert.equal(f.ids.connection.dataset.kind,'');
+    assert.match(f.ids.connection.textContent,/Connected/);assert.equal(f.ids.connection.dataset.kind,'');
     assert.equal([...f.timers.values()][0].ms,2500);
     assert.equal(f.ids.title.textContent,title);assert.equal(f.ids.stages.textContent,stages);assert.equal(f.ids.updated.title,timestamp);
     f.run(2500);call=f.messages.at(-1).message;
@@ -111,9 +112,9 @@ async function tests() {
     assert.equal([...f.timers.values()][0].ms,5000);
     const stale=sample(1);
     f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(stale,false)});
-    assert.match(f.ids.connection.textContent,/Повторное подключение/);assert.equal([...f.timers.values()][0].ms,5000);
+    assert.match(f.ids.connection.textContent,/Reconnecting/);assert.equal([...f.timers.values()][0].ms,5000);
     f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(changed,false)});
-    assert.match(f.ids.connection.textContent,/установлена/);assert.equal([...f.timers.values()][0].ms,2500);
+    assert.match(f.ids.connection.textContent,/Connected/);assert.equal([...f.timers.values()][0].ms,2500);
     assert.equal(f.ids.title.textContent,title);assert.equal(f.ids.stages.textContent,stages);assert.equal(f.ids.updated.title,timestamp);
   });
   await check('incoming notification during polling cannot start an overlapping request',async()=>{
@@ -126,8 +127,8 @@ async function tests() {
     assert.equal([...f.timers.values()][0].ms,2500);
   });
   await check('standalone and unavailable bridge state are honest',async()=>{
-    const standalone=fixture(true);assert.match(standalone.ids.connection.textContent,/Обычный браузер не подключён/);assert.equal(standalone.messages.length,0);
-    const f=fixture();f.run(4000);await settle();assert.match(f.ids.connection.textContent,/не подключило панель/);assert.equal(f.timers.size,0);
+    const standalone=fixture(true);assert.match(standalone.ids.connection.textContent,/standalone browser is not connected/);assert.equal(standalone.messages.length,0);
+    const f=fixture();f.run(4000);await settle();assert.match(f.ids.connection.textContent,/did not connect the panel/);assert.equal(f.timers.size,0);
   });
   await check('hidden view suspends polling and teardown clears timers',async()=>{
     const f=fixture();await connect(f);f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result()});
@@ -162,11 +163,11 @@ async function tests() {
     for (const [scope,key,limit] of cases) {
       const f=fixture();await connect(f);const s=sample();(scope?s.stages[0]:s)[key]='😀'.repeat(limit);
       f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(s)});
-      assert.match(f.ids.connection.textContent,/установлена/);assert.equal(f.ids.stages.children.length,2);
+      assert.match(f.ids.connection.textContent,/Connected/);assert.equal(f.ids.stages.children.length,2);
       const title=f.ids.title.textContent, stageText=f.ids.stages.textContent;
       const invalid=sample(2);(scope?invalid.stages[0]:invalid)[key]='😀'.repeat(limit+1);
       f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(invalid)});
-      assert.match(f.ids.connection.textContent,/Не удалось прочитать/);
+      assert.match(f.ids.connection.textContent,/Could not read/);
       assert.equal(f.ids.title.textContent,title);assert.equal(f.ids.stages.textContent,stageText);
     }
     const f=fixture();await connect(f);const s=sample();s.title='😀'.repeat(121);
@@ -175,32 +176,32 @@ async function tests() {
   await check('same-revision polls advance content age and threshold stale active work',async()=>{
     const f=fixture();await connect(f);
     f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result()});
-    assert.equal(f.ids.freshness.hidden,true);assert.match(f.ids.updated.textContent,/0 секунд назад/);
+    assert.equal(f.ids.freshness.hidden,true);assert.match(f.ids.updated.textContent,/0 seconds ago/);
     f.advance(119000);f.run(2500);let call=f.messages.at(-1).message;
     f.emit({jsonrpc:'2.0',id:call.id,result:result(sample(),false)});await settle();
-    assert.equal(f.ids.freshness.hidden,true);assert.match(f.ids.updated.textContent,/1 минуту назад/);
+    assert.equal(f.ids.freshness.hidden,true);assert.match(f.ids.updated.textContent,/1 minute ago/);
     f.advance(1000);f.run(2500);call=f.messages.at(-1).message;
     f.emit({jsonrpc:'2.0',id:call.id,result:result(sample(),false)});await settle();
-    assert.equal(f.ids.freshness.hidden,false);assert.match(f.ids.freshness.textContent,/Работа может продолжаться/);
-    assert.match(f.ids.updated.textContent,/2 минуты назад/);assert.match(f.ids.connection.textContent,/установлена/);
+    assert.equal(f.ids.freshness.hidden,false);assert.match(f.ids.freshness.textContent,/Work may still be continuing/);
+    assert.match(f.ids.updated.textContent,/2 minutes ago/);assert.match(f.ids.connection.textContent,/Connected/);
     assert.equal(f.ids.stages.children[0].dataset.status,'running');
     f.advance(86400000);f.run(2500);call=f.messages.at(-1).message;
     f.emit({jsonrpc:'2.0',id:call.id,result:result(sample(),false)});await settle();
-    assert.match(f.ids.updated.textContent,/1 день назад/);assert.equal(f.ids.freshness.hidden,false);
+    assert.match(f.ids.updated.textContent,/1 day ago/);assert.equal(f.ids.freshness.hidden,false);
     const fresh=sample(2);fresh.updated_at=new Date(f.now()).toISOString();
     f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(fresh,false)});
-    assert.equal(f.ids.freshness.hidden,true);assert.match(f.ids.updated.textContent,/0 секунд назад/);
+    assert.equal(f.ids.freshness.hidden,true);assert.match(f.ids.updated.textContent,/0 seconds ago/);
   });
   await check('completed historical state has age without active-stale notice; failures preserve last state',async()=>{
     const completed=fixture();await connect(completed);completed.advance(86400000);
     const old=sample();old.stages.forEach(s=>s.status='completed');
     completed.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(old)});
-    assert.match(completed.ids.updated.textContent,/1 день назад/);assert.equal(completed.ids.freshness.hidden,true);
+    assert.match(completed.ids.updated.textContent,/1 day ago/);assert.equal(completed.ids.freshness.hidden,true);
     const f=fixture();await connect(f);f.advance(86400000);
     f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result()});
     const stages=f.ids.stages.textContent;f.run(2500);const call=f.messages.at(-1).message;
     f.advance(86400000);f.emit({jsonrpc:'2.0',id:call.id,error:{code:-1}});await settle();
-    assert.match(f.ids.connection.textContent,/Повторное подключение/);assert.match(f.ids.updated.textContent,/2 дня назад/);
+    assert.match(f.ids.connection.textContent,/Reconnecting/);assert.match(f.ids.updated.textContent,/2 days ago/);
     assert.equal(f.ids.freshness.hidden,false);assert.equal(f.ids.stages.textContent,stages);
     assert.equal(f.timers.size,1); // Existing backoff only; no separate age timer.
     f.emit({jsonrpc:'2.0',id:90,method:'ui/resource-teardown',params:{}});await settle();
@@ -214,7 +215,7 @@ async function tests() {
     const final=sample(2);final.finalized=true;final.finalized_at=final.updated_at;
     final.stages[0].status='blocked';final.blocker='Нужен ответ';
     f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(final)});await settle();
-    assert.equal(f.timers.size,0);assert.match(f.ids.connection.textContent,/Итог выполнения зафиксирован/);
+    assert.equal(f.timers.size,0);assert.match(f.ids.connection.textContent,/Execution result finalized/);
     const timestamp=f.ids.updated.textContent, title=f.ids.title.textContent, stages=f.ids.stages.textContent;
     const late=sample(99);late.title='Поздний ответ';
     f.emit({jsonrpc:'2.0',id:poll.id,result:result(late)});
@@ -235,7 +236,63 @@ async function tests() {
     assert.equal(f.ids.title.textContent,'Панель');assert.equal(f.ids.updated.title,sample().updated_at);
     const reopened=fixture();await connect(reopened);const final=sample(2);final.finalized=true;final.finalized_at=final.updated_at;
     reopened.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(final)});
-    assert.equal(reopened.timers.size,0);assert.match(reopened.ids.updated.textContent,/Зафиксировано/);
+    assert.equal(reopened.timers.size,0);assert.match(reopened.ids.updated.textContent,/Finalized/);
+  });
+  await check('default English and configured Russian cover labels, accessibility, messages and relative dates without translating task data',async()=>{
+    for (const language of ['en','ru']) {
+      const ru=language==='ru', f=fixture(false,language);
+      assert.equal(f.doc.documentElement.lang,language);
+      assert.equal(f.doc.title,ru?'Этапы задачи':'Task stages');
+      assert.equal(f.ids.main.attrs['aria-label'],ru?'Ход работы':'Work progress');
+      assert.equal(f.ids.eyebrow.textContent,ru?'Ход работы':'Work progress');
+      assert.equal(f.ids.current.attrs['aria-label'],ru?'Текущая работа':'Current work');
+      assert.equal(f.ids.blocker.attrs['aria-label'],ru?'Препятствие':'Blocker');
+      assert.equal(f.ids.stages.attrs['aria-label'],ru?'Этапы':'Stages');
+      assert.equal(f.ids['current-label'].textContent,ru?'Сейчас':'Now');
+      assert.equal(f.ids['blocker-title'].textContent,ru?'Работа приостановлена':'Work is paused');
+      assert.equal(f.ids['empty-title'].textContent,ru?'План ещё не привязан':'No plan is linked yet');
+      assert.equal(f.ids['empty-text'].textContent,ru?'После открытия панели для этой задачи здесь появятся этапы и текущая работа.':'Open the panel for this task to see its stages and current work.');
+      assert.equal(f.ids.connection.textContent,ru?'Подключение к панели…':'Connecting to the panel…');
+      await connect(f);
+      f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(null,false)});
+      assert.equal(f.ids.connection.textContent,ru?'Ожидание плана':'Waiting for a plan');
+      const task=sample();task.actor='';task.blocker='Keep this blocker';
+      task.stages=['pending','running','blocked','completed'].map((status,index)=>({id:'stage-'+index,title:'Исходный текст '+index,status,actor:'',detail:''}));
+      f.advance(120000);
+      f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(task,false)});
+      assert.equal(f.ids.title.textContent,task.title);assert.equal(f.ids['current-text'].textContent,task.current);
+      assert.equal(f.ids['blocker-text'].textContent,task.blocker);
+      const expected=ru?['Ожидает','В работе','Приостановлен','Завершён']:['Pending','In progress','Blocked','Completed'];
+      for(let index=0;index<4;index++) {
+        const top=f.ids.stages.children[index].children[1].children[0];
+        assert.equal(top.children[0].textContent,task.stages[index].title);
+        assert.equal(top.children[1].textContent,expected[index]);
+      }
+      assert.equal(f.ids.actor.textContent,ru?'Исполнитель не указан':'Actor not specified');
+      assert.equal(f.ids.connection.textContent,ru?'Получен снимок; живое обновление недоступно':'Snapshot received; live updates unavailable');
+      assert.match(f.ids.updated.textContent,ru?/Обновлено 2 минуты назад/:/Updated 2 minutes ago/);
+      assert.equal(f.ids.freshness.textContent,ru?'Этапы не обновлялись 2 минуты или дольше. Работа может продолжаться.':'Stages have not been updated for 2 minutes or longer. Work may still be continuing.');
+      f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:{isError:true}});
+      assert.equal(f.ids.connection.textContent,ru?'Не удалось прочитать этапы. Ожидание следующего обновления…':'Could not read task stages. Waiting for the next update…');
+      const standalone=fixture(true,language);assert.match(standalone.ids.connection.textContent,ru?/Обычный браузер не подключён/:/standalone browser is not connected/);
+      const unavailable=fixture(false,language);unavailable.run(4000);await settle();
+      assert.match(unavailable.ids.connection.textContent,ru?/не подключило панель/:/did not connect the panel/);
+    }
+  });
+  await check('host locale changes cannot alter resource language or restart finalized polling',async()=>{
+    for(const language of ['en','ru']) {
+      const f=fixture(false,language);await connect(f);
+      const final=sample(2);final.finalized=true;final.finalized_at=final.updated_at;
+      f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(final)});
+      const connection=f.ids.connection.textContent,timestamp=f.ids.updated.textContent,statuses=f.ids.stages.textContent,calls=f.messages.length;
+      f.emit({jsonrpc:'2.0',method:'ui/notifications/host-context-changed',params:{locale:language==='en'?'ru-RU':'en-US',theme:'light'}});
+      f.visibility(true);f.visibility(false);await settle();
+      assert.equal(f.doc.documentElement.lang,language);assert.equal(f.ids.connection.textContent,connection);
+      assert.equal(f.ids.updated.textContent,timestamp);assert.equal(f.ids.stages.textContent,statuses);
+      assert.equal(f.timers.size,0);assert.equal(f.messages.length,calls);
+      assert.match(timestamp,language==='ru'?/Зафиксировано/:/Finalized/);
+    }
+    const invalid=fixture(true,'fr');assert.equal(invalid.doc.documentElement.lang,'en');assert.equal(invalid.doc.title,'Task stages');
   });
   console.log('Bridge mock: '+count+' tests passed. Native host rendering NOT VERIFIED.');
 }
