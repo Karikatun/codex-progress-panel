@@ -13,13 +13,14 @@ h1{font-size:20px;line-height:1.3;letter-spacing:-.02em;font-weight:650;margin:0
 .current{border-left:3px solid var(--accent);padding:2px 0 2px 12px;margin:0 0 20px}.current-label{font-size:11px;color:var(--color-text-secondary,var(--muted));margin:0 0 4px}.current p:last-child{margin:0;white-space:pre-wrap}
 .blocker{background-color:var(--warn-soft);color:var(--warn);padding:12px 14px;margin:0 0 20px;border-radius:6px}.blocker strong{display:block;font-size:12px;margin-bottom:3px}.blocker p{margin:0;white-space:pre-wrap}
 .freshness{color:var(--warn);font-size:12px;line-height:1.5;margin:18px 0 0}
-ol{margin:0;padding:0;list-style:none}li{display:grid;grid-template-columns:24px minmax(0,1fr);column-gap:12px;position:relative;padding:0 0 22px}li:not(:last-child):before{content:"";position:absolute;left:11px;top:27px;bottom:4px;border-left:1px solid var(--color-border-primary,var(--line))}li:last-child{padding-bottom:0}
+ol{margin:0;padding:0;list-style:none}#stages>li{display:grid;grid-template-columns:24px minmax(0,1fr);column-gap:12px;position:relative;padding:0 0 22px}#stages>li:not(:last-child):before{content:"";position:absolute;left:11px;top:27px;bottom:4px;border-left:1px solid var(--color-border-primary,var(--line))}#stages>li:last-child{padding-bottom:0}
 .mark{width:24px;height:24px;display:grid;place-items:center;border:1px solid var(--color-border-primary,var(--line));border-radius:50%;font-size:11px;font-variant-numeric:tabular-nums;color:var(--color-text-secondary,var(--muted));background-color:var(--color-background-primary,var(--paper))}
-li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft);border-color:transparent}li[data-status=running] .mark{border:2px solid var(--accent);color:var(--accent);font-weight:700}li[data-status=blocked] .mark{border-color:var(--warn);color:var(--warn)}
-.stage-top{display:flex;align-items:baseline;gap:6px 12px;flex-wrap:wrap}.stage-title{font-size:14px;font-weight:600;margin:1px 0 0}.stage-status{font-size:11px;color:var(--color-text-secondary,var(--muted))}li[data-status=running] .stage-status{color:var(--accent);font-weight:600}li[data-status=blocked] .stage-status{color:var(--warn)}
+#stages>li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft);border-color:transparent}#stages>li[data-status=running] .mark{border:2px solid var(--accent);color:var(--accent);font-weight:700}#stages>li[data-status=blocked] .mark{border-color:var(--warn);color:var(--warn)}
+.stage-top{display:flex;align-items:baseline;gap:6px 12px;flex-wrap:wrap}.stage-title{font-size:14px;font-weight:600;margin:1px 0 0}.stage-status{font-size:11px;color:var(--color-text-secondary,var(--muted))}#stages>li[data-status=running] .stage-status{color:var(--accent);font-weight:600}#stages>li[data-status=blocked] .stage-status{color:var(--warn)}
+.agents{list-style:none;margin:9px 0 0;padding:0;border-top:1px solid var(--color-border-primary,var(--line))}.agent{padding:7px 0;min-width:0}.agent:last-child{padding-bottom:0}.agent-top{display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 10px}.agent-name{margin:0;font-size:12px;font-weight:600;min-width:0;white-space:pre-wrap}.agent-status{font-size:11px;color:var(--color-text-secondary,var(--muted))}.agent[data-status=running] .agent-status{color:var(--accent)}.agent[data-status=blocked] .agent-status{color:var(--warn)}.agent-detail{margin:2px 0 0;font-size:12px;white-space:pre-wrap;color:var(--color-text-secondary,var(--muted))}
 .stage-detail{margin:5px 0 0;color:var(--color-text-secondary,var(--muted));font-size:12px;white-space:pre-wrap}.actor{margin:4px 0 0;font-size:11px;color:var(--color-text-secondary,var(--muted))}footer{border-top:1px solid var(--color-border-primary,var(--line));padding-top:12px;margin-top:22px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;color:var(--color-text-secondary,var(--muted));font-size:11px;font-variant-numeric:tabular-nums}
 .empty{color:var(--color-text-secondary,var(--muted));line-height:1.6;margin:24px 0 12px}.empty strong{color:var(--color-text-primary,var(--ink));font-weight:600;display:block;margin-bottom:6px}[hidden]{display:none!important}::selection{background-color:var(--soft);color:var(--ink)}*{scrollbar-color:var(--line) transparent;scrollbar-width:thin}a{color:var(--accent);text-underline-offset:3px}a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
-@media(max-width:340px){main{padding:18px 14px}h1{font-size:18px}li{column-gap:9px}.stage-top{gap:3px 8px}}
+@media(max-width:340px){main{padding:18px 14px}h1{font-size:18px}#stages>li{column-gap:9px}.stage-top{gap:3px 8px}}
 @media(prefers-color-scheme:dark){:root:not([data-theme=light]){--ink:#e7ece8;--muted:#b6c1b9;--paper:#1b211d;--line:#3c4940;--accent:#a0d7b5;--soft:#253e2e;--warn:#f5c089;--warn-soft:#493522}}
 </style>
 </head>
@@ -27,12 +28,12 @@ li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft)
 <main id="main" aria-label="Work progress">
 <p id="eyebrow" class="eyebrow">Work progress</p>
 <h1 id="title">Task stages</h1>
-<p id="connection" class="connection" role="status" aria-live="polite">Connecting to the panel…</p>
+<p id="connection" class="connection" role="status" aria-live="polite" aria-atomic="true">Connecting to the panel…</p>
 <div id="empty" class="empty" hidden><strong id="empty-title">No plan is linked yet</strong><span id="empty-text">Open the panel for this task to see its stages and current work.</span></div>
 <section id="current" class="current" aria-label="Current work" hidden><p id="current-label" class="current-label">Now</p><p id="current-text"></p></section>
 <aside id="blocker" class="blocker" aria-label="Blocker" hidden><strong id="blocker-title">Work is paused</strong><p id="blocker-text"></p></aside>
 <ol id="stages" aria-label="Stages"></ol>
-<p id="freshness" class="freshness" role="status" aria-live="polite" hidden></p>
+<p id="freshness" class="freshness" role="status" aria-live="polite" aria-atomic="true" hidden></p>
 <footer id="footer" hidden><span id="actor"></span><span id="updated"></span></footer>
 </main>
 <script>
@@ -46,10 +47,11 @@ li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft)
     en: {
       progress:'Work progress',title:'Task stages',connecting:'Connecting to the panel…',emptyTitle:'No plan is linked yet',
       emptyText:'Open the panel for this task to see its stages and current work.',current:'Current work',now:'Now',
-      blocker:'Blocker',paused:'Work is paused',stages:'Stages',actorMissing:'Actor not specified',
+      blocker:'Blocker',paused:'Work is paused',stages:'Stages',agents:'Agents',actorMissing:'Actor not specified',
       labels:{pending:'Pending',running:'In progress',blocked:'Blocked',completed:'Completed'},
       closed:'Panel closed',noReply:'No response from the host',fixed:'Finalized',updated:'Updated',
-      stale:'Stages have not been updated for 2 minutes or longer. Work may still be continuing.',
+      stale:'No confirmed update for 2 minutes or longer. Work may still be continuing; the result is not finalized.',
+      liveLabel:'Live',staleLabel:'Stale data',lastConfirmed:'Last confirmed update:',
       fetchFailed:'Could not get task stages',waiting:'Waiting for a plan',invalid:'The host returned invalid task stages',
       finalized:'Execution result finalized',connected:'Connected to the host',snapshot:'Snapshot received; live updates unavailable',
       reconnect:'Connection lost. Reconnecting…',rejected:'The host rejected the request',
@@ -60,10 +62,11 @@ li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft)
     ru: {
       progress:'Ход работы',title:'Этапы задачи',connecting:'Подключение к панели…',emptyTitle:'План ещё не привязан',
       emptyText:'После открытия панели для этой задачи здесь появятся этапы и текущая работа.',current:'Текущая работа',now:'Сейчас',
-      blocker:'Препятствие',paused:'Работа приостановлена',stages:'Этапы',actorMissing:'Исполнитель не указан',
+      blocker:'Препятствие',paused:'Работа приостановлена',stages:'Этапы',agents:'Агенты',actorMissing:'Исполнитель не указан',
       labels:{pending:'Ожидает',running:'В работе',blocked:'Приостановлен',completed:'Завершён'},
       closed:'Панель закрыта',noReply:'Нет ответа от приложения',fixed:'Зафиксировано',updated:'Обновлено',
-      stale:'Этапы не обновлялись 2 минуты или дольше. Работа может продолжаться.',
+      stale:'Подтверждённых обновлений нет 2 минуты или дольше. Работа может продолжаться; итог не зафиксирован.',
+      liveLabel:'Актуальные данные',staleLabel:'Данные устарели',lastConfirmed:'Последнее подтверждённое обновление:',
       fetchFailed:'Не удалось получить этапы',waiting:'Ожидание плана',invalid:'Приложение вернуло некорректные этапы',
       finalized:'Итог выполнения зафиксирован',connected:'Связь с приложением установлена',snapshot:'Получен снимок; живое обновление недоступно',
       reconnect:'Связь прервалась. Повторное подключение…',rejected:'Приложение отклонило запрос',
@@ -80,13 +83,15 @@ li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft)
   const idPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
   const pending = new Map();
   let nextId = 1, hostOrigin = '*', connected = false, closed = false;
-  let state = null, taskId = null, readToken = null, timer = null, failures = 0, pollInFlight = false;
+  let state = null, taskId = null, readToken = null, timer = null, ageTimer = null, failures = 0, pollInFlight = false;
+  let transportUnavailable = true, transportMessage = strings.connecting;
   const clockFormat = new Intl.DateTimeFormat(language === 'ru' ? 'ru-RU' : 'en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'});
   const relativeFormat = new Intl.RelativeTimeFormat(language === 'ru' ? 'ru-RU' : 'en-US',{numeric:'always'});
   const staleAfterSeconds = 120;
+  $('main').dataset.observation='unavailable';
 
   function connection(message, kind = '') {
-    $('connection').textContent = message;
+    if ($('connection').textContent !== message) $('connection').textContent = message;
     $('connection').dataset.kind = kind;
   }
   function send(message) {
@@ -102,16 +107,38 @@ li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft)
       send({jsonrpc:'2.0',id,method,params});
     });
   }
-  function validText(v, max) {return typeof v === 'string' && v.length <= max * 2 && Array.from(v).length <= max;}
+  function validText(v, max, empty = true) {
+    return typeof v === 'string' && v.length <= max * 2 && Array.from(v).length <= max && (empty || v.trim().length > 0)
+      && !Array.from(v).some(c => {const n=c.codePointAt(0);return (n<32 && c!=='\n' && c!=='\t') || (n>=0xd800 && n<=0xdfff);});
+  }
+  function exactObject(v, required, optional = []) {
+    return v !== null && typeof v === 'object' && !Array.isArray(v)
+      && required.every(key => Object.prototype.hasOwnProperty.call(v,key))
+      && Object.keys(v).every(key => required.includes(key) || optional.includes(key));
+  }
+  function validId(v) {return typeof v === 'string' && idPattern.test(v);}
+  function validStatus(v) {return typeof v === 'string' && Object.prototype.hasOwnProperty.call(labels,v);}
   function validState(s) {
-    return s && idPattern.test(s.task_id) && Number.isSafeInteger(s.revision) && s.revision > 0
-      && validText(s.title,240) && validText(s.current,600) && validText(s.blocker,600)
+    const stages = new Set(), agents = new Set();
+    return exactObject(s,['task_id','revision','title','current','blocker','actor','updated_at','finalized','finalized_at','stages'])
+      && validId(s.task_id) && Number.isSafeInteger(s.revision) && s.revision > 0
+      && validText(s.title,240,false) && validText(s.current,600) && validText(s.blocker,600)
       && typeof s.finalized === 'boolean'
       && (s.finalized ? validText(s.finalized_at,40) && s.finalized_at === s.updated_at : s.finalized_at === null)
       && validText(s.actor,600) && validText(s.updated_at,40) && Number.isFinite(Date.parse(s.updated_at))
       && Array.isArray(s.stages) && s.stages.length > 0 && s.stages.length <= 32
-      && s.stages.every(x => x && idPattern.test(x.id) && validText(x.title,240)
-        && Object.prototype.hasOwnProperty.call(labels,x.status) && validText(x.actor,160) && validText(x.detail,600));
+      && s.stages.every(x => {
+        if (!exactObject(x,['id','title','status','actor','detail'],['agents']) || !validId(x.id) || stages.has(x.id)
+            || !validText(x.title,240,false) || !validStatus(x.status) || !validText(x.actor,160) || !validText(x.detail,600)) return false;
+        stages.add(x.id);
+        if (!Object.prototype.hasOwnProperty.call(x,'agents')) return true;
+        return Array.isArray(x.agents) && x.agents.length <= 8 && x.agents.every(a => {
+          if (!exactObject(a,['id','actor','status'],['detail']) || !validId(a.id) || agents.has(a.id)
+              || !validText(a.actor,160,false) || !validStatus(a.status) || !validText(a.detail ?? '',600)
+              || (Object.prototype.hasOwnProperty.call(a,'detail') && typeof a.detail !== 'string')) return false;
+          agents.add(a.id);return true;
+        });
+      }) && (!s.stages.some(x => x.status === 'blocked') || s.blocker.trim().length > 0);
   }
   function render(s) {
     $('title').textContent = s.title;
@@ -132,6 +159,19 @@ li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft)
       top.append(title,status);body.append(top);
       if (stage.detail) {const detail=document.createElement('p');detail.className='stage-detail';detail.textContent=stage.detail;body.append(detail);}
       if (stage.actor) {const actor=document.createElement('p');actor.className='actor';actor.textContent=stage.actor;body.append(actor);}
+      if (stage.agents?.length) {
+        const agents=document.createElement('ul');agents.className='agents';agents.setAttribute('aria-label',strings.agents+' · '+stage.title);
+        stage.agents.forEach(agent => {
+          const item=document.createElement('li');item.className='agent';item.dataset.status=agent.status;
+          const top=document.createElement('div');top.className='agent-top';
+          const name=document.createElement('p');name.className='agent-name';name.textContent=agent.actor;
+          const status=document.createElement('span');status.className='agent-status';status.textContent=labels[agent.status];
+          top.append(name,status);item.append(top);
+          if (agent.detail) {const detail=document.createElement('p');detail.className='agent-detail';detail.textContent=agent.detail;item.append(detail);}
+          agents.append(item);
+        });
+        body.append(agents);
+      }
       row.append(mark,body);list.append(row);
     });
     $('stages').replaceChildren(list);
@@ -140,20 +180,26 @@ li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft)
   }
   function freshness() {
     if (!state || closed) return;
+    clearTimeout(ageTimer);ageTimer=null;
     if (state.finalized) {
       $('updated').textContent=strings.fixed+' · '+clockFormat.format(new Date(state.finalized_at));
       $('updated').title=state.finalized_at;
-      $('freshness').hidden=true;$('freshness').textContent='';return;
+      $('main').dataset.observation='finalized';
+      $('freshness').hidden=true;$('freshness').textContent='';connection(strings.finalized);return;
     }
     const seconds=Math.max(0,Math.floor((Date.now()-Date.parse(state.updated_at))/1000));
     const unit=seconds<60?'second':seconds<3600?'minute':seconds<86400?'hour':'day';
     const divisor={second:1,minute:60,hour:3600,day:86400}[unit];
     $('updated').textContent=strings.updated+' '+relativeFormat.format(-Math.floor(seconds/divisor),unit)+' · '+clockFormat.format(new Date(state.updated_at));
     $('updated').title=state.updated_at;
-    const active=state.stages.some(stage=>stage.status==='running'||stage.status==='blocked');
-    const stale=active&&seconds>=staleAfterSeconds;
+    const stale=seconds>=staleAfterSeconds;
+    $('main').dataset.observation=transportUnavailable?'unavailable':stale?'stale':'live';
+    connection(transportUnavailable ? transportMessage : strings.connected+' · '+(stale?strings.staleLabel:strings.liveLabel),transportUnavailable?'error':'');
     $('freshness').hidden=!stale;
-    $('freshness').textContent=stale?strings.stale:'';
+    const notice=stale?strings.stale+' '+strings.lastConfirmed+' '+state.updated_at:'';
+    if ($('freshness').textContent!==notice) $('freshness').textContent=notice;
+    // One local age boundary also covers a snapshot without a read capability. It does not infer lifecycle events.
+    if (!stale && !document.hidden) ageTimer=setTimeout(() => {ageTimer=null;freshness();},Math.max(1,Math.min(staleAfterSeconds*1000,staleAfterSeconds*1000-(Date.now()-Date.parse(state.updated_at)))));
   }
   function accept(result) {
     if (closed || state?.finalized) return;
@@ -165,20 +211,20 @@ li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft)
     if (state && incoming.revision < state.revision) return; // Stale replies cannot affect state or transport recovery.
     if (!state || incoming.revision > state.revision) {
       taskId = incoming.task_id;
-      const capability = result._meta?.read_token;
-      if (typeof capability === 'string' && /^[a-f0-9]{64}$/.test(capability)) readToken=capability;
       render(incoming);state=incoming;
     } // Same-revision success recovers transport without rewriting the snapshot.
+    const capability = result._meta?.read_token;
+    if (typeof capability === 'string' && /^[a-f0-9]{64}$/.test(capability)) readToken=capability;
     if (failures && timer !== null) {clearTimeout(timer);timer=null;}
     failures=0;
+    transportUnavailable=!readToken;transportMessage=strings.snapshot;
     freshness();
     if (state.finalized) {
       clearTimeout(timer);timer=null;
       for (const entry of pending.values()) {clearTimeout(entry.timeout);entry.reject(new Error(strings.finalized));}
       pending.clear();
-      connection(strings.finalized);return;
+      return;
     }
-    connection(readToken ? strings.connected : strings.snapshot,readToken?'':'error');
     schedule();
   }
   function schedule() {
@@ -190,7 +236,7 @@ li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft)
     if (pollInFlight || closed || state?.finalized || !connected || !readToken || document.hidden) return;
     pollInFlight=true;
     try {accept(await request('tools/call',{name:'get_progress',arguments:{task_id:taskId,read_token:readToken}}));}
-    catch (_) {if (closed || state?.finalized) return;failures=Math.min(failures+1,3);freshness();connection(strings.reconnect,'error');}
+    catch (_) {if (closed || state?.finalized) return;failures=Math.min(failures+1,3);transportUnavailable=true;transportMessage=strings.reconnect;freshness();}
     finally {pollInFlight=false;schedule();}
   }
   function context(ctx) {
@@ -204,9 +250,10 @@ li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft)
     }
   }
   function cleanup() {
-    closed=true;clearTimeout(timer);timer=null;
+    closed=true;clearTimeout(timer);timer=null;clearTimeout(ageTimer);ageTimer=null;
     for (const entry of pending.values()) {clearTimeout(entry.timeout);entry.reject(new Error(strings.closed));}
     pending.clear();window.removeEventListener('message',onMessage);
+    document.removeEventListener('visibilitychange',onVisibility);
   }
   function onMessage(event) {
     if (event.source !== window.parent || closed) return;
@@ -223,16 +270,18 @@ li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft)
     }
     if (!connected) return;
     if (m.method === 'ui/notifications/tool-result') {
-      try {accept(m.params);} catch (_) {if (state?.finalized) return;connection(strings.readFailed,'error');}
+      try {accept(m.params);} catch (_) {if (state?.finalized) return;transportUnavailable=true;transportMessage=strings.readFailed;freshness();connection(strings.readFailed,'error');}
     } else if (m.method === 'ui/notifications/host-context-changed') context(m.params);
     else if (m.method === 'ping' && m.id !== undefined) send({jsonrpc:'2.0',id:m.id,result:{}});
     else if (m.method === 'ui/resource-teardown') {send({jsonrpc:'2.0',id:m.id,result:{}});cleanup();}
   }
   window.addEventListener('message',onMessage);
   window.addEventListener('pagehide',cleanup,{once:true});
-  document.addEventListener('visibilitychange',() => {
-    if (document.hidden) {clearTimeout(timer);timer=null;} else schedule();
-  });
+  function onVisibility() {
+    if (document.hidden) {clearTimeout(timer);timer=null;clearTimeout(ageTimer);ageTimer=null;}
+    else {freshness();schedule();}
+  }
+  document.addEventListener('visibilitychange',onVisibility);
   if (window.parent === window) {
     connection(strings.standalone,'error');
     $('empty').hidden=true;

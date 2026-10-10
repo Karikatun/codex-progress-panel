@@ -1,5 +1,7 @@
 """Bounded real stdio, SQLite restart and authorization tests. No sockets."""
 import json
+import copy
+import importlib.util
 import os
 from pathlib import Path
 import re
@@ -11,10 +13,29 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVER = ROOT / "plugins/progress-panel/server.py"
+SERVER_SPEC = importlib.util.spec_from_file_location("progress_server", SERVER)
+progress_server = importlib.util.module_from_spec(SERVER_SPEC)
+SERVER_SPEC.loader.exec_module(progress_server)
 
 
 def assert_schema(value, spec):
     """Validate the declared JSON Schema subset against actual protocol output."""
+    if "not" in spec:
+        try:
+            assert_schema(value, spec["not"])
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError("Value matches excluded schema")
+    if "anyOf" in spec:
+        matched = False
+        for choice in spec["anyOf"]:
+            try:
+                assert_schema(value, choice)
+                matched = True
+            except AssertionError:
+                pass
+        assert matched, "Value must match at least one schema alternative"
     if "oneOf" in spec:
         matches = 0
         for choice in spec["oneOf"]:
@@ -24,8 +45,12 @@ def assert_schema(value, spec):
             except AssertionError:
                 pass
         assert matches == 1, "Output must match exactly one schema alternative"
+    if "required" in spec:
+        assert isinstance(value, dict)
+        assert set(spec["required"]) <= set(value)
+    kind = spec.get("type")
+    if kind is None:
         return
-    kind = spec["type"]
     if kind == "null":
         assert value is None
     elif kind == "object":
@@ -141,6 +166,230 @@ class ProtocolTests(unittest.TestCase):
         reply = self.client.call("create_progress", {"task_id": ident, **self.fields()})
         self.assertNotIn("isError", reply)
         return reply["structuredContent"]
+
+    def agents(self):
+        return [{"id": "agent-" + str(i), "actor": "Worker " + str(i), "status": status,
+            "detail": "Actual work " + str(i)} for i, status in enumerate(("running", "completed", "pending", "blocked"))]
+
+    def read(self, created, ident="task-test"):
+        return self.client.call("get_progress", {"task_id": ident,
+            "read_token": created["read_token"]})["structuredContent"]["state"]
+
+    def test_patch_preserves_order_and_omissions_and_clears_explicit_fields(self):
+        created = self.create()
+        args = {"task_id": "task-test", "write_token": created["write_token"], "expected_revision": 1}
+        first = self.client.call("update_progress", {**args, "patch": {"stages": [
+            {"id": "verify", "detail": "Verification pending"}, {"id": "build", "agents": self.agents()}]}})["structuredContent"]["state"]
+        self.assertEqual(first["revision"], 2)
+        self.assertEqual([s["id"] for s in first["stages"]], ["build", "verify"])
+        self.assertEqual(first["stages"][0]["status"], "running")
+        self.assertEqual(first["stages"][0]["agents"], self.agents())
+        self.assertEqual(first["actor"], created["state"]["actor"])
+        self.assertNotIn("agents", first["stages"][1])
+        second = self.client.call("update_progress", {**args, "expected_revision": 2,
+            "patch": {"actor": "", "current": "", "stages": [{"id": "build", "agents": []}]}})["structuredContent"]["state"]
+        self.assertEqual(second["stages"][0]["agents"], [])
+        self.assertEqual(second["actor"], "")
+        self.assertEqual(second["current"], "")
+        self.assertEqual(second["stages"][1], first["stages"][1])
+        completed = [{**agent, "status": "completed"} for agent in self.agents()]
+        third = self.client.call("update_progress", {**args, "expected_revision": 3,
+            "patch": {"stages": [{"id": "build", "agents": completed}]}})["structuredContent"]["state"]
+        self.assertEqual(third["stages"][0]["status"], "running")
+        self.assertFalse(third["finalized"])
+
+    def test_patch_auth_schema_merge_failures_leave_exact_stored_state(self):
+        import sqlite3
+        created = self.create()
+        args = {"task_id": "task-test", "write_token": created["write_token"], "expected_revision": 1}
+        malformed = [None, [], "patch", {"unknown": 1}, {"title": ""}, {"actor": None},
+            {"stages": {}}, {"stages": [{"title": "Missing id"}]}, {"stages": [{"id": "new"}]},
+            {"stages": [{"id": "build"}, {"id": "build"}]}, {"stages": [{"id": "build", "unknown": 1}]},
+            {"stages": [{"id": "build", "status": "blocked"}]}, {"stages": [{"id": "build", "status": False}]},
+            {"stages": [{"id": "build", "detail": "\ud800"}]}, {"stages": [{"id": "build", "actor": "x" * 161}]}]
+        with sqlite3.connect(str(self.data / "progress.sqlite3")) as db:
+            raw = db.execute("SELECT revision,state FROM tasks").fetchone()
+        for patch in malformed:
+            with self.subTest(patch=patch):
+                self.assertTrue(self.client.call("update_progress", {**args, "patch": patch})["isError"])
+        for capability in (created["read_token"], "0" * 64):
+            self.assertTrue(self.client.call("update_progress", {**args, "write_token": capability, "patch": {"current": "Denied"}})["isError"])
+        self.assertTrue(self.client.call("update_progress", {**args, "expected_revision": True, "patch": {}})["isError"])
+        self.assertTrue(self.client.call("update_progress", {**args, "expected_revision": 2, "patch": {}})["isError"])
+        self.assertTrue(self.client.call("update_progress", {**args, "patch": {}, **self.fields()})["isError"])
+        self.assertTrue(self.client.call("finish_progress", {**args, "patch": {}})["isError"])
+        with sqlite3.connect(str(self.data / "progress.sqlite3")) as db:
+            self.assertEqual(db.execute("SELECT revision,state FROM tasks").fetchone(), raw)
+        fixed = self.client.call("update_progress", {**args, "patch": {"blocker": "Await check",
+            "stages": [{"id": "build", "status": "blocked"}]}})["structuredContent"]["state"]
+        self.assertEqual(fixed["revision"], 2)
+        self.assertTrue(self.client.call("update_progress", {**args, "expected_revision": 2,
+            "patch": {"blocker": ""}})["isError"])
+        self.assertEqual(self.read(created), fixed)
+
+    def test_agents_strict_limits_unicode_and_duplicate_identity_across_stages(self):
+        fields = self.fields()
+        fields["stages"][0]["agents"] = [{"id": "build", "actor": "😀" * 160,
+            "status": "running", "detail": "😀" * 600}]
+        created = self.client.call("create_progress", {"task_id": "task-test", **fields})["structuredContent"]
+        self.assertEqual(created["state"]["stages"][0]["agents"], fields["stages"][0]["agents"])
+        malformed = [None, {}, self.agents() * 3, [{"id": "same", "actor": "A", "status": "running"}] * 2,
+            [{"id": "../escape", "actor": "A", "status": "running"}], [{"id": "a", "status": "running"}],
+            [{"id": "a", "actor": " ", "status": "running"}], [{"id": "a", "actor": 4, "status": "running"}],
+            [{"id": "a", "actor": "A", "status": []}], [{"id": "a", "actor": "A", "status": "stale"}],
+            [{"id": "a", "actor": "😀" * 161, "status": "running"}],
+            [{"id": "a", "actor": "A", "status": "running", "detail": "😀" * 601}],
+            [{"id": "a", "actor": "A\x00", "status": "running"}],
+            [{"id": "a", "actor": "A", "status": "running", "detail": "\ud800"}],
+            [{"id": "a", "actor": "A", "status": "running", "write_token": "untrusted"}]]
+        args = {"task_id": "task-test", "write_token": created["write_token"], "expected_revision": 1}
+        for agents in malformed:
+            with self.subTest(agents=agents):
+                self.assertTrue(self.client.call("update_progress", {**args,
+                    "patch": {"stages": [{"id": "build", "agents": agents}]}})["isError"])
+        duplicate = self.client.call("update_progress", {**args,
+            "patch": {"stages": [{"id": "verify", "agents": [{"id": "build", "actor": "B", "status": "pending"}]}]}})
+        self.assertTrue(duplicate["isError"])
+        self.assertEqual(self.read(created), created["state"])
+        maximum = [{"id": "agent-" + str(i), "actor": "A", "status": "pending"} for i in range(8)]
+        accepted = self.client.call("update_progress", {**args, "patch": {"stages": [{"id": "build", "agents": maximum}]}})
+        self.assertEqual(len(accepted["structuredContent"]["state"]["stages"][0]["agents"]), 8)
+
+    def test_patch_input_schema_declares_mutually_exclusive_modes(self):
+        spec = next(t for t in self.client.request("tools/list")["result"]["tools"] if t["name"] == "update_progress")["inputSchema"]
+        base = {"task_id": "task-test", "write_token": "a" * 64, "expected_revision": 1}
+        for args in ({**base, **self.fields()}, {**base, "patch": {}},
+                     {**base, "patch": {"stages": [{"id": "build", "agents": self.agents()}]}}):
+            assert_schema(args, spec)
+        for args in (base, {**base, **self.fields(), "patch": {}}, {**base, "patch": {}, "actor": "mixed"},
+                     {**base, "patch": {"unknown": 1}}, {**base, "patch": {"stages": [{"title": "no id"}]}}):
+            with self.assertRaises(AssertionError):
+                assert_schema(args, spec)
+
+    def test_concurrent_patch_cas_uses_real_sqlite_and_preserves_other_stage(self):
+        import concurrent.futures
+        import threading
+        created = self.create()
+        other = self.start()
+        barrier = threading.Barrier(2)
+        def write(client, marker):
+            barrier.wait(timeout=3)
+            return client.call("update_progress", {"task_id": "task-test", "write_token": created["write_token"],
+                "expected_revision": 1, "patch": {"current": marker,
+                "stages": [{"id": "build", "detail": marker, "agents": self.agents()}]}})
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(write, client, marker) for client, marker in ((self.client, "writer-a"), (other, "writer-b"))]
+            replies = [future.result(timeout=5) for future in futures]
+        self.assertEqual(sum(not reply.get("isError", False) for reply in replies), 1)
+        loser = next(reply for reply in replies if reply.get("isError"))
+        self.assertIn("Stale revision", loser["content"][0]["text"])
+        state = self.read(created)
+        self.assertEqual(state["revision"], 2)
+        self.assertEqual(state["stages"][0]["detail"], state["current"])
+        self.assertEqual(state["stages"][1], created["state"]["stages"][1])
+        self.assertEqual(len(state["stages"][0]["agents"]), 4)
+
+    def test_interruption_before_finish_retains_aggregate_and_old_widget_capability(self):
+        created = self.create()
+        opening = {"task_id": "task-test", "read_token": created["read_token"]}
+        self.client.call("open_progress_panel", opening)
+        expected = self.client.call("update_progress", {"task_id": "task-test", "write_token": created["write_token"],
+            "expected_revision": 1, "patch": {"stages": [{"id": "build", "agents": self.agents()}]}})["structuredContent"]["state"]
+        self.client.process.terminate()
+        self.client.process.wait(timeout=4)
+        self.client.close()
+        self.client = self.start()
+        read = self.client.call("get_progress", opening)
+        self.assertEqual(read["structuredContent"]["state"], expected)
+        self.assertFalse(expected["finalized"])
+        self.assertIsNone(expected["finalized_at"])
+        self.assertNotIn(created["write_token"], json.dumps(read))
+        final = self.client.call("finish_progress", {"task_id": "task-test", "write_token": created["write_token"],
+            "expected_revision": 2, **{key: expected[key] for key in ("title", "stages", "actor", "current", "blocker")}})["structuredContent"]["state"]
+        denied = self.client.call("update_progress", {"task_id": "task-test", "write_token": created["write_token"],
+            "expected_revision": 3, "patch": {"current": "Denied after finish"}})
+        self.assertTrue(denied["isError"])
+        self.assertEqual(self.read(created), final)
+
+    def test_complete_merged_snapshot_byte_bound_and_single_sql_update(self):
+        store = progress_server.Store(self.data)
+        self.addCleanup(store.close)
+        fields = {"title": "Bounded", "stages": [{"id": "s-" + str(i), "title": "S", "status": "running",
+            "detail": "x" * 600} for i in range(32)]}
+        created = store.create({"task_id": "size-test", **fields})
+        args = {"task_id": "size-test", "write_token": created["write_token"], "expected_revision": 1}
+        traces = []
+        store.db.set_trace_callback(traces.append)
+        agents = [{"id": "a-" + str(i), "actor": "A", "status": "running", "detail": "x" * 600} for i in range(8)]
+        for index in range(16):
+            patch_agents = [{**agent, "id": "s" + str(index) + "-" + agent["id"]} for agent in agents]
+            before = store.db.execute("SELECT revision,state FROM tasks WHERE id='size-test'").fetchone()
+            update_count = sum(query.startswith("UPDATE tasks ") for query in traces)
+            try:
+                result = store.update({**args, "patch": {"stages": [{"id": "s-" + str(index), "agents": patch_agents}]}})
+            except progress_server.Invalid as exc:
+                self.assertIn("Snapshot exceeds 64 KiB", str(exc))
+                self.assertEqual(store.db.execute("SELECT revision,state FROM tasks WHERE id='size-test'").fetchone(), before)
+                self.assertEqual(sum(query.startswith("UPDATE tasks ") for query in traces), update_count)
+                break
+            self.assertEqual(sum(query.startswith("UPDATE tasks ") for query in traces), update_count + 1)
+            args["expected_revision"] = result["state"]["revision"]
+        else:
+            self.fail("Merged snapshots did not reach the size bound")
+        oversized = copy.deepcopy(fields)
+        for index, stage in enumerate(oversized["stages"]):
+            stage["agents"] = [{**agent, "id": str(index) + "-" + agent["id"]} for agent in agents]
+        for method in (store.update, store.finish):
+            with self.assertRaisesRegex(progress_server.Invalid, "Snapshot exceeds 64 KiB"):
+                method({**args, **oversized})
+            self.assertEqual(store.db.execute("SELECT revision,state FROM tasks WHERE id='size-test'").fetchone(), before)
+        with self.assertRaisesRegex(progress_server.Invalid, "Snapshot exceeds 64 KiB"):
+            store.create({"task_id": "too-large", **oversized})
+        unicode_fields = copy.deepcopy(fields)
+        for stage in unicode_fields["stages"]:
+            stage["detail"] = "😀" * 600
+        # Character limits alone do not bound the UTF-8 state written to SQLite.
+        with self.assertRaisesRegex(progress_server.Invalid, "Snapshot exceeds 64 KiB"):
+            store.create({"task_id": "unicode-too-large", **unicode_fields})
+        self.assertEqual(store.db.execute("SELECT count(*) FROM tasks").fetchone()[0], 1)
+        # Old snapshots remain readable without introducing a new read limit or rewrite.
+        legacy = progress_server.snapshot_fields(oversized)
+        legacy.update(task_id="size-test", revision=args["expected_revision"], updated_at=created["state"]["updated_at"])
+        encoded = json.dumps(legacy, ensure_ascii=False)
+        self.assertGreater(len(encoded.encode("utf-8")), progress_server.MAX_SNAPSHOT_BYTES)
+        store.db.execute("UPDATE tasks SET state=? WHERE id='size-test'", (encoded,))
+        state, _ = store.authenticated("size-test", created["read_token"])
+        self.assertFalse(state["finalized"])
+        self.assertEqual(store.db.execute("SELECT state FROM tasks WHERE id='size-test'").fetchone()[0], encoded)
+
+    def test_storage_capacity_concurrent_create_preserves_read_update_and_finish(self):
+        import concurrent.futures
+        import threading
+        import sqlite3
+        first = self.create("retained")
+        for index in range(126):
+            self.create("retained-" + str(index))
+        other = self.start()
+        barrier = threading.Barrier(2)
+        def create_last(client, ident):
+            barrier.wait(timeout=3)
+            return client.call("create_progress", {"task_id": ident, **self.fields()})
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(create_last, client, ident) for client, ident in ((self.client, "last-a"), (other, "last-b"))]
+            replies = [future.result(timeout=5) for future in futures]
+        self.assertEqual(sum(not reply.get("isError", False) for reply in replies), 1)
+        denied = self.client.call("create_progress", {"task_id": "over-capacity", **self.fields()})
+        self.assertTrue(denied["isError"])
+        self.assertIn("128 retained executions", denied["content"][0]["text"])
+        with sqlite3.connect(str(self.data / "progress.sqlite3")) as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM tasks").fetchone()[0], 128)
+        self.assertEqual(self.read(first, "retained"), first["state"])
+        args = {"task_id": "retained", "write_token": first["write_token"], "expected_revision": 1}
+        self.assertEqual(self.client.call("update_progress", {**args, "patch": {"current": "Still writable"}})["structuredContent"]["state"]["revision"], 2)
+        final = self.client.call("finish_progress", {**args, "expected_revision": 2, **self.fields()})["structuredContent"]["state"]
+        self.assertTrue(final["finalized"])
+        with sqlite3.connect(str(self.data / "progress.sqlite3")) as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM tasks").fetchone()[0], 128)
 
     def test_language_default_configuration_override_and_read_once_preserve_state(self):
         def language(client):
@@ -523,6 +772,284 @@ class ProtocolTests(unittest.TestCase):
         result = subprocess.run([sys.executable, "-B", str(SERVER), "--data-dir", str(self.data)], input=b"", capture_output=True, timeout=4)
         self.assertEqual(result.returncode, 1)
         self.assertEqual(target.read_bytes(), b"keep")
+
+
+class CleanupTests(unittest.TestCase):
+    """Retention tests use only a fresh private SQLite directory per test."""
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="cleanup-")
+        self.data = Path(self.temp.name).resolve() / "private-data"
+        self.clients = []
+        self.client = self.start()
+        self.store = progress_server.Store(self.data, auto_cleanup_finalized=True)
+
+    def tearDown(self):
+        self.store.close()
+        for client in self.clients:
+            client.close()
+        self.temp.cleanup()
+
+    def start(self, enabled=False):
+        client = Client(self.data, ("--auto-cleanup-finalized",) if enabled else ())
+        self.clients.append(client)
+        client.initialize()
+        return client
+
+    def fields(self):
+        return {"title": "Retention", "stages": [{"id": "work", "title": "Work", "status": "running"}]}
+
+    def fill(self, finalized=()):
+        created = {}
+        for index in range(128):
+            ident = "retained-%03d" % index
+            created[ident] = self.store.create({"task_id": ident, **self.fields()})
+            if index in finalized:
+                self.store.finish({"task_id": ident, "write_token": created[ident]["write_token"],
+                    "expected_revision": 1, **self.fields()})
+        return created
+
+    def rows(self):
+        return self.store.db.execute("SELECT * FROM tasks ORDER BY id").fetchall()
+
+    def timestamp(self, ident, value):
+        state = json.loads(self.store.db.execute("SELECT state FROM tasks WHERE id=?", (ident,)).fetchone()[0])
+        state.update(updated_at=value, finalized_at=value)
+        self.store.db.execute("UPDATE tasks SET state=? WHERE id=?", (json.dumps(state), ident))
+
+    def create(self, client, ident="new-task"):
+        return client.call("create_progress", {"task_id": ident, **self.fields()})
+
+    def compete(self, operations):
+        import concurrent.futures
+        import threading
+        barrier = threading.Barrier(2)
+        def run(operation):
+            barrier.wait(timeout=3)
+            return operation()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(run, operation) for operation in operations]
+            return [future.result(timeout=6) for future in futures]
+
+    def test_default_off_retains_full_history_and_existing_capabilities(self):
+        created = self.fill((0,))
+        before = self.rows()
+        denied = self.create(self.client)
+        self.assertTrue(denied["isError"])
+        self.assertIn("128 retained executions", denied["content"][0]["text"])
+        self.assertEqual(self.rows(), before)
+        self.client.close()
+        default_restart = self.start()
+        self.assertEqual(self.rows(), before)
+        retained = created["retained-000"]
+        self.assertTrue(default_restart.call("get_progress", {"task_id": "retained-000",
+            "read_token": retained["read_token"]})["structuredContent"]["state"]["finalized"])
+        self.assertEqual(self.rows(), before)
+        for value in (None, 0, 1, "true", []):
+            with self.subTest(value=value), self.assertRaises(progress_server.Invalid):
+                progress_server.Store(self.data, auto_cleanup_finalized=value)
+
+    def test_retention_metadata_is_per_server_and_keeps_tool_shapes(self):
+        default_tools = self.client.request("tools/list")["result"]["tools"]
+        enabled_tools = self.start(True).request("tools/list")["result"]["tools"]
+        for default, enabled in zip(default_tools, enabled_tools):
+            expected = copy.deepcopy(default)
+            if default["name"] == "create_progress":
+                expected["annotations"]["destructiveHint"] = True
+            self.assertEqual(enabled, expected)
+        self.assertEqual(self.client.request("tools/list")["result"]["tools"], default_tools)
+        enabled_server = progress_server.Server(self.store); enabled_server.ready = True
+        disabled_store = progress_server.Store(self.data)
+        try:
+            disabled_server = progress_server.Server(disabled_store); disabled_server.ready = True
+            self.assertEqual(enabled_server.call("tools/list", {}), {"tools": enabled_tools})
+            self.assertEqual(disabled_server.call("tools/list", {}), {"tools": default_tools})
+            self.assertFalse(progress_server.TOOLS[0]["annotations"]["destructiveHint"])
+        finally:
+            disabled_store.close()
+
+    def test_opt_in_below_capacity_and_non_create_calls_never_delete(self):
+        created = self.store.create({"task_id": "retained", **self.fields()})
+        final = self.store.finish({"task_id": "retained", "write_token": created["write_token"],
+            "expected_revision": 1, **self.fields()})["state"]
+        before = self.rows()[0]
+        client = self.start(True)
+        self.assertEqual(self.rows(), [before])
+        self.assertNotIn("isError", self.create(client))
+        self.assertEqual(self.rows()[1], before)
+        self.assertEqual(client.call("get_progress", {"task_id": "retained", "read_token": created["read_token"]})["structuredContent"]["state"], final)
+        self.assertTrue(client.call("finish_progress", {"task_id": "retained", "write_token": created["write_token"],
+            "expected_revision": 2, **self.fields()})["isError"])
+        self.assertEqual(self.rows()[1], before)
+
+    def test_oldest_uses_utc_finalization_then_id_and_preserves_survivor_bytes(self):
+        self.fill((0, 1, 2))
+        # retained-001 and 002 are equally old in UTC; the id resolves that tie.
+        self.timestamp("retained-000", "2020-01-01T00:00:00+00:00")
+        self.timestamp("retained-001", "2020-01-01T00:30:00+02:00")
+        self.timestamp("retained-002", "2019-12-31T22:30:00Z")
+        before = self.rows()
+        client = self.start(True)
+        self.assertNotIn("isError", self.create(client))
+        after = self.rows()
+        self.assertEqual(len(after), 128)
+        self.assertEqual([row for row in after if row[0] != "new-task"],
+            [row for row in before if row[0] != "retained-001"])
+        self.assertNotIn("isError", self.create(client, "next-task"))
+        self.assertFalse(any(row[0] == "retained-002" for row in self.rows()))
+
+    def test_stale_completed_and_legacy_unfinished_rows_are_never_eligible(self):
+        created = self.fill()
+        for index in range(128):
+            ident = "retained-%03d" % index
+            state = copy.deepcopy(created[ident]["state"])
+            state["updated_at"] = "2000-01-01T00:00:00+00:00"
+            state["stages"][0]["status"] = "completed"
+            if index % 2:
+                state.pop("finalized"); state.pop("finalized_at")
+            self.store.db.execute("UPDATE tasks SET state=? WHERE id=?", (json.dumps(state), ident))
+        before = self.rows()
+        self.assertTrue(self.create(self.start(True))["isError"])
+        self.assertEqual(self.rows(), before)
+
+    def test_duplicate_oldest_identity_and_invalid_input_leave_all_bytes(self):
+        self.fill((0,))
+        client = self.start(True)
+        before = self.rows()
+        duplicate = self.create(client, "retained-000")
+        self.assertTrue(duplicate["isError"])
+        self.assertIn("choose a new id", duplicate["content"][0]["text"])
+        invalid = client.call("create_progress", {"task_id": "invalid-input", **self.fields(), "title": ""})
+        self.assertTrue(invalid["isError"])
+        oversized = {"title": "Large", "stages": [{"id": "s" + str(i), "title": "😀" * 240,
+            "status": "running", "detail": "😀" * 600} for i in range(32)]}
+        with self.assertRaisesRegex(progress_server.Invalid, "Snapshot exceeds"):
+            self.store.create({"task_id": "too-large", **oversized})
+        self.assertEqual(self.rows(), before)
+
+    def test_corrupt_retained_states_fail_closed_without_any_deletion(self):
+        self.fill((0,))
+        client = self.start(True)
+        original = self.rows()[0][-1]
+        state = json.loads(original)
+        malformed = ["{", json.dumps({**state, "finalized": "true"}),
+            json.dumps({**state, "finalized_at": None}),
+            json.dumps({**state, "finalized_at": "bad", "updated_at": "bad"}),
+            json.dumps({**state, "finalized_at": "2020-01-01T00:00:00", "updated_at": "2020-01-01T00:00:00"}),
+            json.dumps({**state, "task_id": "other"}), json.dumps({**state, "revision": 99}),
+            json.dumps({**state, "stages": []}), original[:-1] + ',"finalized":true}']
+        for encoded in malformed:
+            with self.subTest(encoded=encoded):
+                self.store.db.execute("UPDATE tasks SET state=? WHERE id='retained-000'", (encoded,))
+                before = self.rows()
+                reply = client.request("tools/call", {"name": "create_progress", "arguments": {"task_id": "new-task", **self.fields()}})
+                self.assertTrue(reply.get("error") or reply["result"].get("isError"))
+                self.assertEqual(self.rows(), before)
+        self.store.db.execute("UPDATE tasks SET state=? WHERE id='retained-000'", (original,))
+        # Corruption in an unfinished row is not ignored while choosing a victim.
+        self.store.db.execute("UPDATE tasks SET state='{}' WHERE id='retained-127'")
+        before = self.rows()
+        self.assertTrue(self.create(client)["isError"])
+        self.assertEqual(self.rows(), before)
+
+    def test_insert_failure_rolls_back_victim_and_retry_succeeds(self):
+        self.fill((0,))
+        before = self.rows()
+        self.store.db.execute("CREATE TRIGGER reject_new BEFORE INSERT ON tasks BEGIN SELECT RAISE(ABORT, 'test insertion failure'); END")
+        self.assertTrue(self.create(self.start(True))["isError"])
+        self.assertEqual(self.rows(), before)
+        self.store.db.execute("DROP TRIGGER reject_new")
+        self.assertNotIn("isError", self.create(self.clients[-1]))
+        self.assertEqual(len(self.rows()), 128)
+
+    def test_over_limit_database_is_not_pruned(self):
+        self.fill((0,))
+        row = list(self.rows()[0]); row[0] = "extra"
+        state = json.loads(row[-1]); state["task_id"] = "extra"; row[-1] = json.dumps(state)
+        self.store.db.execute("INSERT INTO tasks VALUES (?,?,?,?,?)", row)
+        before = self.rows()
+        self.assertTrue(self.create(self.start(True))["isError"])
+        self.assertEqual(self.rows(), before)
+
+    def test_real_sqlite_held_lock_failure_preserves_rows_then_retry(self):
+        self.fill((0,))
+        client = self.start(True)
+        before = self.rows()
+        self.store.db.execute("BEGIN IMMEDIATE")
+        try:
+            reply = client.request("tools/call", {"name": "create_progress", "arguments": {"task_id": "new-task", **self.fields()}})
+            self.assertEqual(reply["error"]["code"], -32603)
+            self.assertEqual(self.rows(), before)
+        finally:
+            self.store.db.execute("ROLLBACK")
+        self.assertNotIn("isError", self.create(client))
+        self.assertEqual(len(self.rows()), 128)
+
+    def test_two_real_servers_compete_for_one_eligible_row(self):
+        self.fill((0,))
+        first, second = self.start(True), self.start(True)
+        replies = self.compete([lambda: self.create(first, "new-a"), lambda: self.create(second, "new-b")])
+        self.assertEqual(sum(not reply.get("isError", False) for reply in replies), 1)
+        self.assertEqual(len(self.rows()), 128)
+        self.assertFalse(any(row[0] == "retained-000" for row in self.rows()))
+
+    def test_two_real_servers_with_two_eligible_rows_both_succeed(self):
+        self.fill((0, 1))
+        first, second = self.start(True), self.start(True)
+        before = self.rows()
+        replies = self.compete([lambda: self.create(first, "new-a"), lambda: self.create(second, "new-b")])
+        self.assertTrue(all(not reply.get("isError", False) for reply in replies))
+        self.assertEqual(len(self.rows()), 128)
+        self.assertEqual([row for row in self.rows() if row[0].startswith("retained-")], before[2:])
+
+    def test_cleanup_and_update_serialize_without_changing_survivor_authority(self):
+        created = self.fill((0,))
+        first, second = self.start(True), self.start(True)
+        args = {"task_id": "retained-001", "write_token": created["retained-001"]["write_token"],
+            "expected_revision": 1, "patch": {"current": "Updated survivor"}}
+        replies = self.compete([lambda: self.create(first), lambda: second.call("update_progress", args)])
+        self.assertTrue(all(not reply.get("isError", False) for reply in replies))
+        survivor = next(row for row in self.rows() if row[0] == "retained-001")
+        self.assertEqual(survivor[1:3], (progress_server.digest(args["write_token"]), created["retained-001"]["read_token"]))
+        self.assertEqual(survivor[3], 2)
+        self.assertEqual(json.loads(survivor[4])["current"], "Updated survivor")
+
+    def test_cleanup_and_finish_serialize_with_no_unconfirmed_victim(self):
+        created = self.fill()
+        first, second = self.start(True), self.start(True)
+        args = {"task_id": "retained-000", "write_token": created["retained-000"]["write_token"],
+            "expected_revision": 1, **self.fields()}
+        replies = self.compete([lambda: self.create(first), lambda: second.call("finish_progress", args)])
+        self.assertNotIn("isError", replies[1])
+        self.assertTrue(replies[1]["structuredContent"]["state"]["finalized"])
+        self.assertEqual(len(self.rows()), 128)
+        if replies[0].get("isError"):
+            self.assertTrue(json.loads(self.rows()[0][-1])["finalized"])
+            self.assertNotIn("isError", self.create(first))
+        else:
+            self.assertFalse(any(row[0] == "retained-000" for row in self.rows()))
+
+    def test_restart_deleted_capabilities_and_reused_id_reject_old_tokens(self):
+        created = self.fill((0,))
+        before = self.rows()
+        client = self.start(True)
+        self.assertNotIn("isError", self.create(client))
+        client.close()
+        client = self.start()
+        victim = created["retained-000"]
+        opening = {"task_id": "retained-000", "read_token": victim["read_token"]}
+        writing = {"task_id": "retained-000", "write_token": victim["write_token"], "expected_revision": 2, **self.fields()}
+        for name, args in (("get_progress", opening), ("open_progress_panel", opening), ("update_progress", writing), ("finish_progress", writing)):
+            self.assertTrue(client.call(name, args)["isError"])
+        self.assertEqual([row for row in self.rows() if row[0] != "new-task"], before[1:])
+        # Free another confirmed row and explicitly reuse the deleted id.
+        self.store.finish({"task_id": "retained-001", "write_token": created["retained-001"]["write_token"],
+            "expected_revision": 1, **self.fields()})
+        replacement = self.create(self.start(True), "retained-000")["structuredContent"]
+        self.assertNotEqual(replacement["read_token"], victim["read_token"])
+        self.assertNotEqual(replacement["write_token"], victim["write_token"])
+        self.assertTrue(client.call("get_progress", opening)["isError"])
+        self.assertTrue(client.call("update_progress", {**writing, "expected_revision": 1})["isError"])
+        self.assertEqual(client.call("get_progress", {"task_id": "retained-000", "read_token": replacement["read_token"]})["structuredContent"]["state"], replacement["state"])
 
 
 if __name__ == "__main__":

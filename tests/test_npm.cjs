@@ -76,8 +76,8 @@ async function deadline(promise, ms = 8000) {
   try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('process exit deadline')), ms); })]); }
   finally { clearTimeout(timer); }
 }
-function fromNpm(data, cacheName, options = {}) {
-  return start('npm', ['exec', '--offline', '--yes', '--ignore-scripts', `--package=${tarball}`, '--', 'codex-progress-panel', '--data-dir', data],
+function fromNpm(data, cacheName, options = {}, extraArgs = []) {
+  return start('npm', ['exec', '--offline', '--yes', '--ignore-scripts', `--package=${tarball}`, '--', 'codex-progress-panel', '--data-dir', data, ...extraArgs],
     { env: npmEnvironment(path.join(area, cacheName)), ...options });
 }
 function pids() {
@@ -176,6 +176,35 @@ test('real offline npm exec: stdio, resources, update, freeze and durable restar
     assert.deepEqual(treeDigest(roots[0]), packedBefore, 'runtime changed npm cache package bytes');
   }
   assert.equal(fs.readdirSync(path.join(area, 'caller with spaces Кириллица')).length, 0);
+});
+
+test('real offline packed npm forwards opt-in retention and defaults to preserving full history', async () => {
+  const data = path.join(area, 'retention state');
+  const fields = { title: 'Retained npm task', stages: [{ id: 'check', title: 'Check', status: 'completed' }] };
+  let client = fromNpm(data, 'retention cache'); await client.initialize();
+  const retained = [];
+  for (let i = 0; i < 128; i++) {
+    const task_id = `retained-${i}`;
+    retained.push((await client.call('create_progress', { task_id, ...fields })).structuredContent);
+  }
+  const victim = retained[0];
+  await client.call('finish_progress', { task_id: 'retained-0', write_token: victim.write_token, expected_revision: 1, ...fields });
+  const survivorArgs = { task_id: 'retained-1', read_token: retained[1].read_token };
+  const survivor = (await client.call('get_progress', survivorArgs)).structuredContent.state;
+  await client.close();
+  client = fromNpm(data, 'retention cache'); await client.initialize();
+  assert.equal((await client.call('create_progress', { task_id: 'default-denied', ...fields })).isError, true);
+  assert.equal((await client.call('get_progress', { task_id: 'retained-0', read_token: victim.read_token })).structuredContent.state.finalized, true);
+  await client.close();
+  client = fromNpm(data, 'retention cache', {}, ['--auto-cleanup-finalized']); await client.initialize();
+  // Merely starting with the flag does not prune finalized history.
+  assert.equal((await client.call('get_progress', { task_id: 'retained-0', read_token: victim.read_token })).structuredContent.state.finalized, true);
+  const created = await client.call('create_progress', { task_id: 'replacement', ...fields });
+  assert.equal(created.structuredContent.state.revision, 1);
+  assert.equal((await client.call('get_progress', { task_id: 'retained-0', read_token: victim.read_token })).isError, true);
+  assert.deepEqual((await client.call('get_progress', survivorArgs)).structuredContent.state, survivor);
+  assert.equal((await client.call('create_progress', { task_id: 'unfinished-denied', ...fields })).isError, true);
+  await client.close();
 });
 
 test('real offline npm exec reads Russian config and forwards an English override without changing finalized state', async () => {
@@ -302,5 +331,5 @@ test('explicit help/version work from packed launcher without Python or state', 
   const env = { ...npmEnv, PATH: path.join(area, 'empty PATH') };
   assert.equal(execFileSync(process.execPath, [launcher, '--version'], { env, encoding: 'utf8' }), '0.1.1\n');
   const help=execFileSync(process.execPath, [launcher, '--help'], { env, encoding: 'utf8' });
-  assert.ok(help.includes('Python 3.9+')); assert.ok(help.includes('--language en|ru')); assert.ok(help.includes('config.json'));
+  assert.ok(help.includes('Python 3.9+')); assert.ok(help.includes('--language en|ru')); assert.ok(help.includes('config.json')); assert.ok(help.includes('--auto-cleanup-finalized')); assert.ok(help.includes('Default: off'));
 });

@@ -97,5 +97,55 @@ class PackagingTests(unittest.TestCase):
             self.assertFalse(any(caller.iterdir()))
 
 
+    def test_copied_plugin_defaults_off_and_accepts_explicit_retention_flag(self):
+        from contextlib import closing
+        import importlib.util
+        import os
+        with tempfile.TemporaryDirectory(prefix="plugin-retention-") as temp:
+            area = Path(temp).resolve()
+            package = area / "plugin copy with spaces"
+            shutil.copytree(PACKAGE, package)
+            data = area / "private state"
+            spec = importlib.util.spec_from_file_location("copied_progress", package / "server.py")
+            copied = importlib.util.module_from_spec(spec); spec.loader.exec_module(copied)
+            old_umask = os.umask(0o077)
+            try:
+                store = copied.Store(data)
+                try:
+                    fields = {"title": "Copied", "stages": [{"id": "work", "title": "Work", "status": "running"}]}
+                    first = None
+                    for index in range(128):
+                        created = store.create({"task_id": "retained-" + str(index), **fields})
+                        if index == 0:
+                            first = created
+                    store.finish({"task_id": "retained-0", "write_token": first["write_token"], "expected_revision": 1, **fields})
+                    before = store.db.execute("SELECT * FROM tasks ORDER BY id").fetchall()
+                finally:
+                    store.close()
+            finally:
+                os.umask(old_umask)
+            manifest = json.loads((package / "mcp.json").read_text())["mcpServers"]["progress"]
+            self.assertNotIn("--auto-cleanup-finalized", manifest["args"])
+            def launch(extra):
+                commands = [
+                    {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "retention-test", "version": "1"}}},
+                    {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                    {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "create_progress", "arguments": {"task_id": "replacement", **fields}}},
+                ]
+                process = subprocess.run([manifest["command"], *manifest["args"], "--data-dir", str(data), *extra],
+                    cwd=package, input="".join(json.dumps(item) + "\n" for item in commands), text=True, capture_output=True, timeout=8)
+                self.assertEqual(process.returncode, 0, process.stderr)
+                self.assertEqual(process.stderr, "")
+                return [json.loads(line) for line in process.stdout.splitlines()][1]["result"]
+            self.assertTrue(launch(())["isError"])
+            with closing(copied.Store(data)) as store:
+                self.assertEqual(store.db.execute("SELECT * FROM tasks ORDER BY id").fetchall(), before)
+            self.assertNotIn("isError", launch(("--auto-cleanup-finalized",)))
+            with closing(copied.Store(data)) as store:
+                after = store.db.execute("SELECT * FROM tasks ORDER BY id").fetchall()
+                self.assertEqual(len(after), 128)
+                self.assertEqual([row for row in after if row[0] != "replacement"], [row for row in before if row[0] != "retained-0"])
+
+
 if __name__ == "__main__":
     unittest.main()

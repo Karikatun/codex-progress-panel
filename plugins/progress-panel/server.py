@@ -17,6 +17,7 @@ VERSION = "0.1.1"
 URI = "ui://progress/panel.html"
 MIME = "text/html;profile=mcp-app"
 MAX_LINE = 65536
+MAX_SNAPSHOT_BYTES = 65536
 MAX_TASKS = 128
 STATUSES = ("pending", "running", "blocked", "completed")
 ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}\Z")
@@ -91,9 +92,10 @@ def snapshot_fields(value):
     if not isinstance(stages, list) or not 1 <= len(stages) <= 32:
         raise Invalid("Supply 1 to 32 stages")
     seen = set()
+    agents_seen = set()
     result["stages"] = []
     for stage in stages:
-        exact_object(stage, ("id", "title", "status"), ("actor", "detail"))
+        exact_object(stage, ("id", "title", "status"), ("actor", "detail", "agents"))
         ident = safe_id(stage["id"])
         if ident in seen or stage["status"] not in STATUSES:
             raise Invalid("Invalid stage identity or status")
@@ -101,9 +103,52 @@ def snapshot_fields(value):
         result["stages"].append({"id": ident, "title": text_field(stage["title"], 240),
             "status": stage["status"], "actor": text_field(stage.get("actor", ""), 160, empty=True),
             "detail": text_field(stage.get("detail", ""), 600, empty=True)})
+        if "agents" in stage:
+            agents = stage["agents"]
+            if not isinstance(agents, list) or len(agents) > 8:
+                raise Invalid("Supply 0 to 8 agents per stage")
+            result["stages"][-1]["agents"] = []
+            for agent in agents:
+                exact_object(agent, ("id", "actor", "status"), ("detail",))
+                agent_id = safe_id(agent["id"])
+                if agent_id in agents_seen or agent["status"] not in STATUSES:
+                    raise Invalid("Invalid agent identity or status")
+                agents_seen.add(agent_id)
+                result["stages"][-1]["agents"].append({"id": agent_id,
+                    "actor": text_field(agent["actor"], 160), "status": agent["status"],
+                    "detail": text_field(agent.get("detail", ""), 600, empty=True)})
     if any(s["status"] == "blocked" for s in result["stages"]) and not result["blocker"].strip():
         raise Invalid("Blocked stages require a blocker")
     return result
+
+
+def merge_patch(old, patch):
+    """Merge named stages without adding, deleting or reordering them."""
+    exact_object(patch, (), ("title", "actor", "current", "blocker", "stages"))
+    merged = {k: old[k] for k in ("title", "actor", "current", "blocker", "stages")}
+    merged.update({k: v for k, v in patch.items() if k != "stages"})
+    if "stages" in patch:
+        changes = patch["stages"]
+        if not isinstance(changes, list) or len(changes) > 32:
+            raise Invalid("Supply 0 to 32 stage patches")
+        existing = {stage["id"] for stage in old["stages"]}
+        by_id = {}
+        for change in changes:
+            exact_object(change, ("id",), ("title", "status", "actor", "detail", "agents"))
+            ident = safe_id(change["id"])
+            if ident not in existing or ident in by_id:
+                raise Invalid("Patch requires unique existing stage ids")
+            by_id[ident] = change
+        merged["stages"] = [{**stage, **by_id.get(stage["id"], {})} for stage in old["stages"]]
+    return snapshot_fields(merged)
+
+
+def serialized_state(state):
+    """Bound the complete persisted UTF-8 snapshot, including server fields."""
+    encoded = json.dumps(state, ensure_ascii=False, separators=(",", ":"))
+    if len(encoded.encode("utf-8")) > MAX_SNAPSHOT_BYTES:
+        raise Invalid("Snapshot exceeds 64 KiB; shorten stage or agent summaries")
+    return encoded
 
 
 def digest(value):
@@ -136,7 +181,10 @@ def private_directory(path):
 
 
 class Store:
-    def __init__(self, data_dir):
+    def __init__(self, data_dir, auto_cleanup_finalized=False):
+        if type(auto_cleanup_finalized) is not bool:
+            raise Invalid("Automatic cleanup must be a boolean")
+        self.auto_cleanup_finalized = auto_cleanup_finalized
         data_dir = private_directory(data_dir)
         db_path = data_dir / "progress.sqlite3"
         # Refuse SQLite sidecars that could redirect reads/writes outside this directory.
@@ -163,7 +211,11 @@ class Store:
         actual = digest(capability) if write else capability
         if not row or not hmac.compare_digest(expected, actual):
             raise Invalid("Task unavailable or invalid capability")
-        state = json.loads(row[3])
+        return self.stored_state(task_id, row[2], row[3]), row[1]
+
+    def stored_state(self, task_id, stored_revision, encoded):
+        """Validate retained state for both authenticated reads and retention."""
+        state = json.loads(encoded, object_pairs_hook=unique_pairs, parse_constant=invalid_constant)
         exact_object(state, ("task_id", "revision", "updated_at", "title", "stages", "actor", "current", "blocker"), ("finalized", "finalized_at"))
         # Legacy snapshots remain readable without mutating their stored bytes.
         state.setdefault("finalized", False)
@@ -174,24 +226,52 @@ class Store:
             text_field(state["finalized_at"], 40)
             if state["finalized_at"] != state["updated_at"]:
                 raise Invalid("Stored finalization is invalid")
+            self.finalized_time(state)
         snapshot_fields({k: state[k] for k in ("title", "stages", "actor", "current", "blocker")})
-        if state["task_id"] != task_id or state["revision"] != row[2]:
+        safe_id(task_id)
+        if state["task_id"] != task_id or state["revision"] != stored_revision:
             raise Invalid("Stored state is invalid")
         revision(state["revision"])
         text_field(state["updated_at"], 40)
-        return state, row[1]
+        return state
+
+    @staticmethod
+    def finalized_time(state):
+        try:
+            timestamp = datetime.fromisoformat(state["finalized_at"].replace("Z", "+00:00"))
+            if timestamp.utcoffset() is None:
+                raise ValueError("Naive timestamp")
+            return timestamp.astimezone(timezone.utc)
+        except (ValueError, OverflowError):
+            raise Invalid("Stored finalization is invalid")
+
+    def oldest_finalized(self):
+        candidates = []
+        for task_id, stored_revision, encoded in self.db.execute("SELECT id, revision, state FROM tasks"):
+            state = self.stored_state(task_id, stored_revision, encoded)
+            if state["finalized"]:
+                candidates.append((self.finalized_time(state), task_id))
+        return min(candidates)[1] if candidates else None
 
     def create(self, args):
         exact_object(args, ("task_id", "title", "stages"), ("actor", "current", "blocker"))
         task_id = safe_id(args["task_id"])
         state = snapshot_fields({k: v for k, v in args.items() if k != "task_id"})
         state.update(task_id=task_id, revision=1, updated_at=datetime.now(timezone.utc).isoformat(), finalized=False, finalized_at=None)
+        encoded = serialized_state(state)
         write_token, read_token = secrets.token_hex(32), secrets.token_hex(32)
         self.db.execute("BEGIN IMMEDIATE")
         try:
-            if self.db.execute("SELECT count(*) FROM tasks").fetchone()[0] >= MAX_TASKS:
-                raise Invalid("Task capacity reached")
-            self.db.execute("INSERT INTO tasks VALUES (?,?,?,?,?)", (task_id, digest(write_token), read_token, 1, json.dumps(state, ensure_ascii=False)))
+            # Never replace an existing identity, including the retention victim.
+            if self.db.execute("SELECT 1 FROM tasks WHERE id=?", (task_id,)).fetchone():
+                raise Invalid("Task unavailable; choose a new id or use its existing capability")
+            count = self.db.execute("SELECT count(*) FROM tasks").fetchone()[0]
+            if count >= MAX_TASKS:
+                victim = self.oldest_finalized() if count == MAX_TASKS and self.auto_cleanup_finalized else None
+                if victim is None:
+                    raise Invalid("Task capacity reached (128 retained executions); preserve history and select a fresh private data directory")
+                self.db.execute("DELETE FROM tasks WHERE id=?", (victim,))
+            self.db.execute("INSERT INTO tasks VALUES (?,?,?,?,?)", (task_id, digest(write_token), read_token, 1, encoded))
             self.db.execute("COMMIT")
         except sqlite3.IntegrityError:
             self.db.execute("ROLLBACK")
@@ -208,9 +288,12 @@ class Store:
         return self.replace(args, finalize=True)
 
     def replace(self, args, finalize):
-        exact_object(args, ("task_id", "write_token", "expected_revision", "title", "stages"), ("actor", "current", "blocker"))
+        patch_mode = isinstance(args, dict) and "patch" in args and not finalize
+        if patch_mode:
+            exact_object(args, ("task_id", "write_token", "expected_revision", "patch"))
+        else:
+            exact_object(args, ("task_id", "write_token", "expected_revision", "title", "stages"), ("actor", "current", "blocker"))
         expected = revision(args["expected_revision"])
-        state = snapshot_fields({k: v for k, v in args.items() if k not in ("task_id", "write_token", "expected_revision")})
         self.db.execute("BEGIN IMMEDIATE")
         try:
             old, _ = self.authenticated(args["task_id"], args["write_token"], write=True)
@@ -218,11 +301,14 @@ class Store:
                 raise Invalid("Task finalized; stop writing this execution")
             if old["revision"] != expected:
                 raise Invalid("Stale revision; read the authenticated task with get_progress before retrying")
+            state = merge_patch(old, args["patch"]) if patch_mode else snapshot_fields(
+                {k: v for k, v in args.items() if k not in ("task_id", "write_token", "expected_revision")})
             timestamp = datetime.now(timezone.utc).isoformat()
             state.update(task_id=args["task_id"], revision=expected + 1, updated_at=timestamp,
                 finalized=finalize, finalized_at=timestamp if finalize else None)
             revision(state["revision"])
-            self.db.execute("UPDATE tasks SET revision=?, state=? WHERE id=?", (state["revision"], json.dumps(state, ensure_ascii=False), args["task_id"]))
+            encoded = serialized_state(state)
+            self.db.execute("UPDATE tasks SET revision=?, state=? WHERE id=?", (state["revision"], encoded, args["task_id"]))
             self.db.execute("COMMIT")
         except Exception:
             self.db.execute("ROLLBACK")
@@ -237,15 +323,32 @@ def schema(properties, required=()):
 ID_SCHEMA = {"type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$", "maxLength": 64}
 TOKEN_SCHEMA = {"type": "string", "pattern": "^[a-f0-9]{64}$", "maxLength": 64}
 TEXT_SCHEMA = {"type": "string", "maxLength": 600}
+AGENT_SCHEMA = schema({"id": ID_SCHEMA, "actor": {"type": "string", "minLength": 1, "maxLength": 160},
+    "status": {"type": "string", "enum": list(STATUSES)}, "detail": TEXT_SCHEMA}, ("id", "actor", "status"))
+AGENTS_SCHEMA = {"type": "array", "maxItems": 8, "items": AGENT_SCHEMA}
 FIELDS = {"title": {"type": "string", "minLength": 1, "maxLength": 240}, "actor": TEXT_SCHEMA,
     "current": TEXT_SCHEMA, "blocker": TEXT_SCHEMA,
     "stages": {"type": "array", "minItems": 1, "maxItems": 32, "items": schema({"id": ID_SCHEMA,
         "title": {"type": "string", "minLength": 1, "maxLength": 240},
         "status": {"type": "string", "enum": list(STATUSES)},
-        "actor": {"type": "string", "maxLength": 160}, "detail": TEXT_SCHEMA}, ("id", "title", "status"))}}
+        "actor": {"type": "string", "maxLength": 160}, "detail": TEXT_SCHEMA,
+        "agents": AGENTS_SCHEMA}, ("id", "title", "status"))}}
+
+PATCH_FIELDS = {**FIELDS, "stages": {"type": "array", "maxItems": 32,
+    "items": schema(FIELDS["stages"]["items"]["properties"], ("id",))}}
+WRITE_FIELDS = {"task_id": ID_SCHEMA, "write_token": TOKEN_SCHEMA,
+    "expected_revision": {"type": "integer", "minimum": 1, "maximum": 2**53-2}}
+UPDATE_INPUT = schema({**WRITE_FIELDS, **FIELDS, "patch": schema(PATCH_FIELDS)},
+    ("task_id", "write_token", "expected_revision"))
+UPDATE_INPUT["oneOf"] = [
+    {"required": ["title", "stages"], "not": {"required": ["patch"]}},
+    {"required": ["patch"], "not": {"anyOf": [{"required": [name]} for name in FIELDS]}}]
 
 
-STAGE_OUTPUT = {**FIELDS["stages"]["items"], "required": ["id", "title", "status", "actor", "detail"]}
+AGENT_OUTPUT = {**AGENT_SCHEMA, "required": ["id", "actor", "status", "detail"]}
+STAGE_OUTPUT = {**FIELDS["stages"]["items"], "properties": {
+    **FIELDS["stages"]["items"]["properties"], "agents": {**AGENTS_SCHEMA, "items": AGENT_OUTPUT}},
+    "required": ["id", "title", "status", "actor", "detail"]}
 STATE_OUTPUT = schema({**FIELDS, "stages": {**FIELDS["stages"], "items": STAGE_OUTPUT},
     "task_id": ID_SCHEMA, "revision": {"type": "integer", "minimum": 1, "maximum": 2**53-1},
     "updated_at": {"type": "string", "minLength": 1, "maxLength": 40, "format": "date-time"},
@@ -269,10 +372,8 @@ TOOLS = [
     tool("open_progress_panel", "Open one authenticated task's read-only progress panel. Empty arguments show an unbound empty panel. Requires create_progress first to bind a task.",
         schema({"task_id": ID_SCHEMA, "read_token": TOKEN_SCHEMA}), OPEN_RESULT, True,
         {"ui": {"resourceUri": URI, "visibility": ["model"]}}),
-    tool("update_progress", "Replace an authenticated task progress snapshot with compare-and-swap revision. Completed means the named stage is done, not release or deployment proof.",
-        schema({"task_id": ID_SCHEMA, "write_token": TOKEN_SCHEMA,
-            "expected_revision": {"type": "integer", "minimum": 1, "maximum": 2**53-2}, **FIELDS},
-            ("task_id", "write_token", "expected_revision", "title", "stages")), STATE_RESULT, False, {"ui": {"visibility": ["model"]}}),
+    tool("update_progress", "Atomically replace a complete snapshot or merge patch fields with compare-and-swap revision. Patch names existing stages and preserves omitted fields. Never mix modes. Completed agents do not complete their stage.",
+        UPDATE_INPUT, STATE_RESULT, False, {"ui": {"visibility": ["model"]}}),
     tool("finish_progress", "Freeze the final snapshot of this assistant execution. Irrevocable; blocked or pending stages may remain. Requires the write capability and current revision.",
         schema({"task_id": ID_SCHEMA, "write_token": TOKEN_SCHEMA,
             "expected_revision": {"type": "integer", "minimum": 1, "maximum": 2**53-2}, **FIELDS},
@@ -305,7 +406,12 @@ class Server:
             raise Invalid("Initialization required")
         if method == "tools/list":
             single_page_params(params)
-            return {"tools": TOOLS}
+            # Retention is an operator opt-in; describe its possible deletion
+            # without changing the shared catalog used by other Store instances.
+            tools = [{**entry, "annotations": {**entry["annotations"], "destructiveHint": True}}
+                if entry["name"] == "create_progress" and self.store.auto_cleanup_finalized else entry
+                for entry in TOOLS]
+            return {"tools": tools}
         if method == "resources/list":
             single_page_params(params)
             return {"resources": [{"uri": URI, "name": "progress_panel", "title": "Task stages" if self.language == "en" else "Этапы задачи", "mimeType": MIME}]}
@@ -427,6 +533,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", default=str(Path.home() / ".codex-progress-panel"), help="Absolute private directory. Its parent must exist; symlinks are rejected.")
     parser.add_argument("--language", choices=("en", "ru"), help="UI language. Overrides and skips <data-dir>/config.json; default: en.")
+    parser.add_argument("--auto-cleanup-finalized", action="store_true", help="Opt in to deleting one oldest confirmed finalized execution only when creating at the 128-row limit. Default: off; deletion cannot be undone.")
     args = parser.parse_args()
     os.umask(0o077)
     try:
@@ -440,7 +547,7 @@ def main():
         print('progress-panel: invalid config.json; use a private regular file with {"language":"en"} or {"language":"ru"}, or override with --language en|ru', file=sys.stderr)
         return 1
     try:
-        store = Store(data_dir)
+        store = Store(data_dir, auto_cleanup_finalized=args.auto_cleanup_finalized)
     except Exception:
         print("progress-panel: private data directory is unavailable or unsafe", file=sys.stderr)
         return 1
