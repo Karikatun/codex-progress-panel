@@ -1,8 +1,8 @@
-# codex-progress-panel 0.1.1
+# codex-progress-panel 0.1.2
 
 [English](README.md) | [Русский](README.ru.md)
 
-This checkout contains a local reliability candidate based on `0.1.1`. Its metadata is unchanged; the changes below are not a published release.
+This checkout contains the unpublished `0.1.2` release candidate. It adds reliable stale-state observation, agent summaries, compact patch updates, and explicit opt-in cleanup of finalized history. Publication and native host acceptance remain separate checks.
 
 Show progress stages in a local Codex widget. Each assistant execution gets a new widget. A successful `finish_progress` freezes its final snapshot. Later executions cannot change that history.
 
@@ -50,7 +50,7 @@ The plugin root is `plugins/progress-panel`. It contains portable `plugin.json` 
 
 ## Use the npm server
 
-This guide covers [`codex-progress-panel@0.1.1`](https://www.npmjs.com/package/codex-progress-panel/v/0.1.1). The launcher has no third-party runtime dependencies, lifecycle scripts, or interpreter installer. Python handles storage and MCP behavior.
+This guide covers the unpublished candidate [`codex-progress-panel@0.1.2`](https://www.npmjs.com/package/codex-progress-panel/v/0.1.2). The launcher has no third-party runtime dependencies, lifecycle scripts, or interpreter installer. Python handles storage and MCP behavior.
 
 Configure a stdio MCP server in your host:
 
@@ -68,7 +68,7 @@ To select another state directory, append `--data-dir` and its absolute path as 
 
 This configuration adds the MCP server. It does not install the `progress-panel` skill. Use the full plugin route for the skill and bundled UI resource. The host still controls UI rendering.
 
-The npm package also contains the complete plugin. [distribution/marketplace.npm.json](distribution/marketplace.npm.json) pins its npm source to `0.1.1`. Use that reviewed variant through a host that supports npm marketplace sources. That host needs npm. Public npx server checks for `0.1.0` passed in two fresh caches. Full-plugin installation and native UI from the npm source remain unverified.
+The npm package also contains the complete plugin. [distribution/marketplace.npm.json](distribution/marketplace.npm.json) pins its npm source to `0.1.2`. Use that reviewed variant through a host that supports npm marketplace sources. That host needs npm. Public npx server checks for `0.1.0` passed in two fresh caches. Full-plugin installation and native UI from the npm source remain unverified.
 
 Version `0.1.1` adds updated English and Russian documentation. The published `0.1.0` tarball remains unchanged.
 

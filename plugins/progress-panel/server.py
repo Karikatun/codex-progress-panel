@@ -13,7 +13,7 @@ import stat
 import sys
 from datetime import datetime, timezone
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 URI = "ui://progress/panel.html"
 MIME = "text/html;profile=mcp-app"
 MAX_LINE = 65536

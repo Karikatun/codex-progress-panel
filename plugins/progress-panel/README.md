@@ -1,8 +1,8 @@
-# codex-progress-panel 0.1.1
+# codex-progress-panel 0.1.2
 
 [English](#english) | [Русский](#русский)
 
-Local reliability candidate based on `0.1.1`; metadata is unchanged and these source changes are not published. Локальный кандидат на основе `0.1.1`: метаданные сохранены, изменения исходного кода не опубликованы.
+Unpublished `0.1.2` release candidate: reliable stale-state observation, agent summaries, compact patch updates, and explicit opt-in cleanup of finalized history. Неопубликованный кандидат `0.1.2`: надёжное отображение устаревшего состояния, сводки агентов, компактные patch-обновления и явно включаемая очистка финализированной истории.
 
 ## English
 
@@ -12,7 +12,7 @@ A local stdio MCP server and full Codex plugin. Each assistant execution gets a 
 
 Use macOS or Linux, Node.js 22+, npm/npx, and Python 3.9+ as `python3` in PATH. Windows is unsupported. The full plugin launches Python directly and does not need the Node launcher. The server has no third-party Python dependencies.
 
-This guide covers [`codex-progress-panel@0.1.1`](https://www.npmjs.com/package/codex-progress-panel/v/0.1.1). Configure a stdio MCP server:
+This guide covers the unpublished candidate [`codex-progress-panel@0.1.2`](https://www.npmjs.com/package/codex-progress-panel/v/0.1.2). Configure a stdio MCP server:
 
 ```json
 {"mcpServers":{"progress":{"command":"npx","args":["-y","codex-progress-panel"]}}}
@@ -51,7 +51,7 @@ The server reads the file once at startup, before opening SQLite. A missing file
 
 An MCP server entry does not install the `progress-panel` skill. The package also includes `plugin.json`, `mcp.json`, the Python server, HTML UI, and `skills/progress-panel/SKILL.md`. Use a reviewed marketplace installation for the full plugin. The host controls rendering and placement.
 
-The source repository's `distribution/marketplace.npm.json` pins npm version `0.1.1`. A host using that source needs npm and npm marketplace support. Full-plugin installation and native UI from the npm source remain unverified. The local-source route is documented in the repository guide. For version `0.1.1`, use source branch `prep/v0.1.1`.
+The source repository's `distribution/marketplace.npm.json` pins npm version `0.1.2`. A host using that source needs npm and npm marketplace support. Full-plugin installation and native UI from the npm source remain unverified. The local-source route is documented in the repository guide. For version `0.1.1`, use source branch `prep/v0.1.1`.
 
 Start a new chat after installation. Example request: **«Покажи этапы работы в панели и обновляй её по мере выполнения задачи.»**
 
@@ -77,7 +77,7 @@ See the repository guide for all tools, limits, tests, and native acceptance: [E
 
 Используйте macOS или Linux, Node.js 22+, npm/npx и Python 3.9+ под именем `python3` в PATH. Windows не поддерживается. Полный плагин запускает Python напрямую и не требует запускающего модуля Node. У сервера нет сторонних зависимостей Python.
 
-Это руководство для [`codex-progress-panel@0.1.1`](https://www.npmjs.com/package/codex-progress-panel/v/0.1.1). Настройте stdio MCP-сервер:
+Это руководство для неопубликованного кандидата [`codex-progress-panel@0.1.2`](https://www.npmjs.com/package/codex-progress-panel/v/0.1.2). Настройте stdio MCP-сервер:
 
 ```json
 {"mcpServers":{"progress":{"command":"npx","args":["-y","codex-progress-panel"]}}}
@@ -116,7 +116,7 @@ npx -y codex-progress-panel --help
 
 MCP-запись не устанавливает skill `progress-panel`. Пакет также содержит `plugin.json`, `mcp.json`, сервер Python, HTML UI и `skills/progress-panel/SKILL.md`. Для полного плагина используйте проверенную установку через marketplace. Хост управляет отображением и размещением.
 
-Файл `distribution/marketplace.npm.json` в репозитории закрепляет npm-версию `0.1.1`. Хосту нужны npm и поддержка npm-источников marketplace. Установка полного плагина и встроенный UI из npm-источника пока не проверены. Установка из локального исходного кода описана в руководстве репозитория. Для версии `0.1.1` используйте исходный код из ветки `prep/v0.1.1`.
+Файл `distribution/marketplace.npm.json` в репозитории закрепляет npm-версию `0.1.2`. Хосту нужны npm и поддержка npm-источников marketplace. Установка полного плагина и встроенный UI из npm-источника пока не проверены. Установка из локального исходного кода описана в руководстве репозитория. Для версии `0.1.1` используйте исходный код из ветки `prep/v0.1.1`.
 
 После установки начните новый чат. Пример запроса: **«Покажи этапы работы в панели и обновляй её по мере выполнения задачи.»**
 
