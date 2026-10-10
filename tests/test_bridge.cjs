@@ -7,17 +7,20 @@ const vm = require('node:vm');
 const html = fs.readFileSync(path.join(__dirname,'../plugins/progress-panel/panel.html'),'utf8');
 const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 class Element {
-  constructor(tag) {this.tag=tag;this.children=[];this.dataset={};this.attrs={};this.hidden=false;this._text='';this.style={setProperty:(k,v)=>{this.attrs[k]=v;}};}
+  constructor(tag) {this.tag=tag;this.children=[];this.dataset={};this.attrs={};this.hidden=false;this._text='';this.textWrites=0;this.style={setProperty:(k,v)=>{this.attrs[k]=v;}};}
   get textContent() {return this._text + this.children.map(x=>x.textContent).join('');}
-  set textContent(v) {this._text=String(v);this.children=[];}
+  set textContent(v) {this._text=String(v);this.children=[];this.textWrites++;}
   append(...nodes) {for (const node of nodes) this.children.push(...(node.tag==='fragment'?node.children:[node]));}
   replaceChildren(...nodes) {this.children=[];this._text='';this.append(...nodes);}
   setAttribute(key,value) {this.attrs[key]=value;}
 }
 function fixture(standalone=false,language='en') {
-  const ids={};for (const m of html.matchAll(/<[^>]*\bid="([^"]+)"[^>]*>/g)) {ids[m[1]]=new Element('element');ids[m[1]].hidden=/\bhidden\b/.test(m[0]);}
+  const ids={};for (const m of html.matchAll(/<[^>]*\bid="([^"]+)"[^>]*>/g)) {
+    const element=ids[m[1]]=new Element('element');element.hidden=/\bhidden\b/.test(m[0]);
+    for (const attr of m[0].matchAll(/([\w-]+)="([^"]*)"/g)) element.attrs[attr[1]]=attr[2];
+  }
   const listeners=new Map(), docListeners=new Map(), messages=[], timers=new Map();let next=1;
-  const doc={hidden:false,documentElement:new Element('html'),getElementById:id=>ids[id],createElement:tag=>new Element(tag),createDocumentFragment:()=>new Element('fragment'),addEventListener:(n,f)=>docListeners.set(n,f)};
+  const doc={hidden:false,documentElement:new Element('html'),getElementById:id=>ids[id],createElement:tag=>new Element(tag),createDocumentFragment:()=>new Element('fragment'),addEventListener:(n,f)=>docListeners.set(n,f),removeEventListener:n=>docListeners.delete(n)};
   doc.documentElement.lang=language;
   const parent={postMessage:(m,origin)=>messages.push({message:m,origin})};
   const win={parent,addEventListener:(n,f)=>listeners.set(n,f),removeEventListener:n=>listeners.delete(n)};
@@ -30,7 +33,9 @@ function fixture(standalone=false,language='en') {
   return {ids,doc,messages,timers,parent,
     emit(data,source=parent,origin='https://host.example'){listeners.get('message')?.({data,source,origin});},
     run(ms){const [id,entry]=[...timers].find(([,x])=>x.ms===ms)||[];assert.ok(entry,'Expected timer '+ms);timers.delete(id);entry.f();},
-    visibility(hidden){doc.hidden=hidden;docListeners.get('visibilitychange')();},
+    visibility(hidden){doc.hidden=hidden;docListeners.get('visibilitychange')?.();},
+    pagehide(){listeners.get('pagehide')?.();},
+    transportTimers(){return [...timers.values()].filter(x=>x.ms<=15000);},
     advance(ms){now+=ms;},now(){return now;}
   };
 }
@@ -81,7 +86,8 @@ async function tests() {
   await check('read capability missing exposes snapshot limitation',async()=>{
     const f=fixture();await connect(f);
     f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(sample(),false)});
-    assert.match(f.ids.connection.textContent,/live updates unavailable/);assert.equal(f.timers.size,0);
+    assert.match(f.ids.connection.textContent,/live updates unavailable/);assert.equal(f.transportTimers().length,0);
+    assert.equal(f.timers.size,1);assert.equal([...f.timers.values()][0].ms,120000);
   });
   await check('error reconnect preserves last stage and bounded retry',async()=>{
     const f=fixture();await connect(f);
@@ -89,10 +95,10 @@ async function tests() {
     const call=f.messages.at(-1).message;
     f.emit({jsonrpc:'2.0',id:call.id,error:{code:-1,message:'no'}});await settle();
     assert.match(f.ids.connection.textContent,/Reconnecting/);assert.equal(f.ids.stages.children.length,2);
-    assert.equal([...f.timers.values()][0].ms,5000);
+    assert.equal(f.transportTimers()[0].ms,5000);
     f.run(5000);const retry=f.messages.at(-1).message;
     f.emit({jsonrpc:'2.0',id:retry.id,result:result(sample(2),false)});await settle();
-    assert.match(f.ids.connection.textContent,/Connected/);assert.equal([...f.timers.values()][0].ms,2500);
+    assert.match(f.ids.connection.textContent,/Connected/);assert.equal(f.transportTimers()[0].ms,2500);
   });
   await check('same-revision success recovers transport and base polling without rewriting snapshot',async()=>{
     const f=fixture();await connect(f);const original=sample(2);
@@ -100,21 +106,21 @@ async function tests() {
     const title=f.ids.title.textContent, stages=f.ids.stages.textContent, timestamp=f.ids.updated.title;
     f.run(2500);let call=f.messages.at(-1).message;
     f.emit({jsonrpc:'2.0',id:call.id,error:{code:-1,message:'disconnected'}});await settle();
-    assert.match(f.ids.connection.textContent,/Reconnecting/);assert.equal([...f.timers.values()][0].ms,5000);
+    assert.match(f.ids.connection.textContent,/Reconnecting/);assert.equal(f.transportTimers()[0].ms,5000);
     f.run(5000);call=f.messages.at(-1).message;
     const changed=sample(2);changed.title='Changed';changed.stages[0].status='completed';changed.updated_at='2026-10-08T09:30:00+00:00';
     f.emit({jsonrpc:'2.0',id:call.id,result:result(changed,false)});await settle();
     assert.match(f.ids.connection.textContent,/Connected/);assert.equal(f.ids.connection.dataset.kind,'');
-    assert.equal([...f.timers.values()][0].ms,2500);
+    assert.equal(f.transportTimers()[0].ms,2500);
     assert.equal(f.ids.title.textContent,title);assert.equal(f.ids.stages.textContent,stages);assert.equal(f.ids.updated.title,timestamp);
     f.run(2500);call=f.messages.at(-1).message;
     f.emit({jsonrpc:'2.0',id:call.id,error:{code:-1}});await settle();
-    assert.equal([...f.timers.values()][0].ms,5000);
+    assert.equal(f.transportTimers()[0].ms,5000);
     const stale=sample(1);
     f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(stale,false)});
-    assert.match(f.ids.connection.textContent,/Reconnecting/);assert.equal([...f.timers.values()][0].ms,5000);
+    assert.match(f.ids.connection.textContent,/Reconnecting/);assert.equal(f.transportTimers()[0].ms,5000);
     f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(changed,false)});
-    assert.match(f.ids.connection.textContent,/Connected/);assert.equal([...f.timers.values()][0].ms,2500);
+    assert.match(f.ids.connection.textContent,/Connected/);assert.equal(f.transportTimers()[0].ms,2500);
     assert.equal(f.ids.title.textContent,title);assert.equal(f.ids.stages.textContent,stages);assert.equal(f.ids.updated.title,timestamp);
   });
   await check('incoming notification during polling cannot start an overlapping request',async()=>{
@@ -122,9 +128,9 @@ async function tests() {
     f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result()});f.run(2500);
     const call=f.messages.at(-1).message;
     f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(sample(2))});
-    assert.equal(f.timers.size,1);assert.equal([...f.timers.values()][0].ms,4000);
+    assert.equal(f.transportTimers().length,1);assert.equal(f.transportTimers()[0].ms,4000);
     f.emit({jsonrpc:'2.0',id:call.id,result:result(sample(1),false)});await settle();
-    assert.equal([...f.timers.values()][0].ms,2500);
+    assert.equal(f.transportTimers()[0].ms,2500);
   });
   await check('standalone and unavailable bridge state are honest',async()=>{
     const standalone=fixture(true);assert.match(standalone.ids.connection.textContent,/standalone browser is not connected/);assert.equal(standalone.messages.length,0);
@@ -132,7 +138,7 @@ async function tests() {
   });
   await check('hidden view suspends polling and teardown clears timers',async()=>{
     const f=fixture();await connect(f);f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result()});
-    f.visibility(true);assert.equal(f.timers.size,0);f.visibility(false);assert.equal(f.timers.size,1);
+    f.visibility(true);assert.equal(f.timers.size,0);f.visibility(false);assert.equal(f.timers.size,2);
     f.emit({jsonrpc:'2.0',id:90,method:'ui/resource-teardown',params:{}});
     assert.equal(f.messages.at(-1).message.id,90);assert.equal(f.timers.size,0);
     f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(sample(9))});assert.equal(f.timers.size,0);
@@ -142,7 +148,7 @@ async function tests() {
     const poll=f.messages.at(-1).message;
     f.emit({jsonrpc:'2.0',id:poll.id,method:'ping',params:{}});
     assert.equal(f.messages.at(-1).message.id,poll.id);assert.ok('result' in f.messages.at(-1).message);
-    assert.equal([...f.timers.values()][0].ms,4000);
+    assert.equal(f.transportTimers()[0].ms,4000);
     f.emit({jsonrpc:'2.0',id:poll.id,method:'ui/resource-teardown',params:{}});await settle();
     assert.equal(f.messages.at(-1).message.id,poll.id);assert.ok('result' in f.messages.at(-1).message);
     assert.equal(f.timers.size,0);
@@ -154,9 +160,9 @@ async function tests() {
     const f=fixture();await connect(f);f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result()});f.run(2500);
     const poll=f.messages.at(-1).message;
     f.emit({jsonrpc:'2.0',id:poll.id,result:result(sample(2)),error:{code:-1}});await settle();
-    assert.equal([...f.timers.values()][0].ms,4000);
+    assert.equal(f.transportTimers()[0].ms,4000);
     f.emit({jsonrpc:'2.0',id:poll.id,result:result(sample(2),false)});await settle();
-    assert.equal([...f.timers.values()][0].ms,2500);
+    assert.equal(f.transportTimers()[0].ms,2500);
   });
   await check('astral Unicode matches codepoint limits for every display text field',async()=>{
     const cases=[[null,'title',240],[null,'actor',600],[null,'current',600],[null,'blocker',600],['stage','title',240],['stage','actor',160],['stage','detail',600]];
@@ -192,18 +198,19 @@ async function tests() {
     f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(fresh,false)});
     assert.equal(f.ids.freshness.hidden,true);assert.match(f.ids.updated.textContent,/0 seconds ago/);
   });
-  await check('completed historical state has age without active-stale notice; failures preserve last state',async()=>{
+  await check('completed but unfinished historical state is stale; failures preserve last state',async()=>{
     const completed=fixture();await connect(completed);completed.advance(86400000);
     const old=sample();old.stages.forEach(s=>s.status='completed');
     completed.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(old)});
-    assert.match(completed.ids.updated.textContent,/1 day ago/);assert.equal(completed.ids.freshness.hidden,true);
+    assert.match(completed.ids.updated.textContent,/1 day ago/);assert.equal(completed.ids.freshness.hidden,false);
+    assert.equal(completed.ids.main.dataset.observation,'stale');
     const f=fixture();await connect(f);f.advance(86400000);
     f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result()});
     const stages=f.ids.stages.textContent;f.run(2500);const call=f.messages.at(-1).message;
     f.advance(86400000);f.emit({jsonrpc:'2.0',id:call.id,error:{code:-1}});await settle();
     assert.match(f.ids.connection.textContent,/Reconnecting/);assert.match(f.ids.updated.textContent,/2 days ago/);
     assert.equal(f.ids.freshness.hidden,false);assert.equal(f.ids.stages.textContent,stages);
-    assert.equal(f.timers.size,1); // Existing backoff only; no separate age timer.
+    assert.equal(f.timers.size,1); // Past the age boundary: only the backoff remains.
     f.emit({jsonrpc:'2.0',id:90,method:'ui/resource-teardown',params:{}});await settle();
     assert.equal(f.timers.size,0);const count=f.messages.length;f.advance(86400000);f.visibility(false);
     assert.equal(f.timers.size,0);assert.equal(f.messages.length,count);
@@ -271,7 +278,7 @@ async function tests() {
       assert.equal(f.ids.actor.textContent,ru?'Исполнитель не указан':'Actor not specified');
       assert.equal(f.ids.connection.textContent,ru?'Получен снимок; живое обновление недоступно':'Snapshot received; live updates unavailable');
       assert.match(f.ids.updated.textContent,ru?/Обновлено 2 минуты назад/:/Updated 2 minutes ago/);
-      assert.equal(f.ids.freshness.textContent,ru?'Этапы не обновлялись 2 минуты или дольше. Работа может продолжаться.':'Stages have not been updated for 2 minutes or longer. Work may still be continuing.');
+      assert.equal(f.ids.freshness.textContent,(ru?'Подтверждённых обновлений нет 2 минуты или дольше. Работа может продолжаться; итог не зафиксирован. Последнее подтверждённое обновление: ':'No confirmed update for 2 minutes or longer. Work may still be continuing; the result is not finalized. Last confirmed update: ')+task.updated_at);
       f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:{isError:true}});
       assert.equal(f.ids.connection.textContent,ru?'Не удалось прочитать этапы. Ожидание следующего обновления…':'Could not read task stages. Waiting for the next update…');
       const standalone=fixture(true,language);assert.match(standalone.ids.connection.textContent,ru?/Обычный браузер не подключён/:/standalone browser is not connected/);
@@ -293,6 +300,153 @@ async function tests() {
       assert.match(timestamp,language==='ru'?/Зафиксировано/:/Finalized/);
     }
     const invalid=fixture(true,'fr');assert.equal(invalid.doc.documentElement.lang,'en');assert.equal(invalid.doc.title,'Task stages');
+  });
+  await check('snapshot-only unfinished work ages locally without writes or repeated timers',async()=>{
+    const f=fixture();await connect(f);const s=sample();s.stages.forEach(stage=>stage.status='completed');
+    f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(s,false)});
+    const messages=f.messages.length,stages=f.ids.stages.textContent;
+    assert.equal(f.ids.main.dataset.observation,'unavailable');assert.equal(f.ids.freshness.hidden,true);
+    f.advance(120000);f.run(120000);
+    assert.equal(f.ids.freshness.hidden,false);assert.ok(f.ids.freshness.textContent.includes(s.updated_at));
+    assert.match(f.ids.freshness.textContent,/result is not finalized/);assert.equal(f.ids.stages.textContent,stages);
+    assert.equal(f.messages.length,messages);assert.equal(f.timers.size,0);
+    f.advance(86400000);f.visibility(true);f.visibility(false);
+    assert.match(f.ids.updated.textContent,/1 day ago/);assert.equal(f.timers.size,0);
+  });
+  await check('same revision can attach a read capability without refreshing confirmed data',async()=>{
+    const f=fixture();await connect(f);const s=sample();
+    f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(s,false)});
+    f.advance(180000);
+    const same=sample();same.title='Unconfirmed replacement';same.updated_at=new Date(f.now()).toISOString();
+    f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(same)});
+    assert.equal(f.ids.title.textContent,s.title);assert.equal(f.ids.updated.title,s.updated_at);
+    assert.equal(f.ids.main.dataset.observation,'stale');assert.match(f.ids.connection.textContent,/Connected.*Stale/);
+    assert.equal(f.transportTimers()[0].ms,2500);f.run(2500);
+    assert.equal(f.messages.at(-1).message.params.arguments.read_token,readToken);
+  });
+  await check('old widget reconnects after restart while same-revision data stays stale',async()=>{
+    const f=fixture();await connect(f);f.advance(3600000);
+    f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result()});
+    const snapshot=f.ids.stages.textContent,timestamp=f.ids.updated.title;
+    assert.equal(f.ids.main.dataset.observation,'stale');
+    f.run(2500);let call=f.messages.at(-1).message;
+    f.emit({jsonrpc:'2.0',id:call.id,error:{code:-32603,message:'server unavailable'}});await settle();
+    assert.equal(f.ids.main.dataset.observation,'unavailable');assert.equal(f.ids.updated.title,timestamp);
+    f.run(5000);call=f.messages.at(-1).message;
+    f.emit({jsonrpc:'2.0',id:call.id,result:result(sample(),false)});await settle();
+    assert.equal(f.ids.main.dataset.observation,'stale');assert.equal(f.ids.stages.textContent,snapshot);
+    assert.equal(f.ids.updated.title,timestamp);assert.equal(f.ids.freshness.hidden,false);
+    const newer=sample(2);newer.updated_at=new Date(f.now()).toISOString();
+    f.run(2500);call=f.messages.at(-1).message;
+    f.emit({jsonrpc:'2.0',id:call.id,result:result(newer,false)});await settle();
+    assert.equal(f.ids.main.dataset.observation,'live');assert.equal(f.ids.freshness.hidden,true);
+    assert.equal(f.ids.updated.title,newer.updated_at);
+  });
+  await check('read timeout and late reply cannot fake recovery; matched retry preserves old age',async()=>{
+    const f=fixture();await connect(f);f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result()});
+    f.run(2500);const expired=f.messages.at(-1).message;f.advance(180000);f.run(4000);await settle();
+    assert.equal(f.ids.main.dataset.observation,'unavailable');assert.equal(f.ids.freshness.hidden,false);
+    f.emit({jsonrpc:'2.0',id:expired.id,result:result(sample(9))});await settle();
+    assert.equal(f.ids.main.dataset.observation,'unavailable');assert.equal(f.ids.updated.title,sample().updated_at);
+    f.run(5000);const retry=f.messages.at(-1).message;
+    f.emit({jsonrpc:'2.0',id:retry.id,result:result(sample(),false)});await settle();
+    assert.equal(f.ids.main.dataset.observation,'stale');assert.equal(f.ids.updated.title,sample().updated_at);
+    assert.equal(f.transportTimers()[0].ms,2500);
+  });
+  await check('foreign origin cannot replace agents or consume a correlated read',async()=>{
+    const f=fixture();await connect(f);f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result()});f.run(2500);
+    const poll=f.messages.at(-1).message,foreign=sample(2);foreign.stages[0].agents=[{id:'foreign',actor:'Foreign',status:'running'}];
+    f.emit({jsonrpc:'2.0',id:poll.id,result:result(foreign)},f.parent,'https://untrusted.example');
+    f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(foreign)},f.parent,'https://untrusted.example');
+    assert.equal(f.ids.stages.textContent.includes('Foreign'),false);assert.equal(f.transportTimers()[0].ms,4000);
+    f.emit({jsonrpc:'2.0',id:poll.id,result:result(sample(),false)});await settle();assert.equal(f.transportTimers()[0].ms,2500);
+  });
+  await check('Stop or silence before finish never changes stage or finalization',async()=>{
+    const f=fixture();await connect(f);f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result()});
+    f.advance(120000);f.run(120000);
+    assert.equal(f.ids.main.dataset.observation,'stale');assert.equal(f.ids.stages.children[0].dataset.status,'running');
+    assert.match(f.ids.freshness.textContent,/not finalized/);
+    const before=f.messages.length;f.pagehide();await settle();assert.equal(f.timers.size,0);
+    f.visibility(false);f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(sample(9))});
+    assert.equal(f.messages.length,before);assert.equal(f.ids.main.dataset.observation,'stale');
+    assert.ok(f.messages.filter(x=>x.message.method==='tools/call').every(x=>x.message.params.name==='get_progress'));
+    const reopened=fixture();await connect(reopened);reopened.advance(120000);
+    reopened.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result()});
+    assert.equal(reopened.ids.main.dataset.observation,'stale');assert.equal(reopened.ids.stages.children[0].dataset.status,'running');
+  });
+  await check('four independent agents are semantic stage-associated text and do not complete their stage',async()=>{
+    for (const language of ['en','ru']) {
+      const f=fixture(false,language);await connect(f);const s=sample();
+      s.stages[0].agents=['running','completed','pending','blocked'].map((status,index)=>({id:'agent-'+index,actor:'Agent '+index,status,detail:'Current work '+index}));
+      f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(s)});
+      const stage=f.ids.stages.children[0],list=stage.children[1].children.at(-1);
+      assert.equal(stage.dataset.status,'running');assert.equal(list.tag,'ul');assert.equal(list.children.length,4);
+      assert.equal(list.attrs['aria-label'],(language==='ru'?'Агенты':'Agents')+' · '+s.stages[0].title);
+      for (let index=0;index<4;index++) {
+        const agent=list.children[index];assert.equal(agent.tag,'li');assert.equal(agent.dataset.status,s.stages[0].agents[index].status);
+        assert.ok(agent.textContent.includes('Agent '+index));assert.ok(agent.textContent.includes('Current work '+index));
+      }
+      const newer=sample(2);newer.stages[0].agents=s.stages[0].agents.map(a=>({...a,status:'completed'}));
+      f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(newer)});
+      assert.equal(f.ids.stages.children[0].dataset.status,'running');assert.equal(f.ids.main.dataset.observation,'live');
+    }
+  });
+  await check('legacy omitted agents and empty agents render no empty group; large legacy state remains readable',async()=>{
+    const f=fixture();await connect(f);const legacy=sample();
+    legacy.stages=Array.from({length:32},(_,index)=>({id:'s'+index,title:'😀'.repeat(240),status:'completed',actor:'😀'.repeat(160),detail:'😀'.repeat(600)}));
+    assert.ok(Buffer.byteLength(JSON.stringify(legacy))>65536);
+    f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(legacy)});
+    assert.equal(f.ids.stages.children.length,32);assert.equal(f.ids.main.dataset.observation,'live');
+    assert.equal(f.ids.stages.children[0].children[1].children.some(x=>x.tag==='ul'),false);
+    const empty=sample(2);empty.stages[0].agents=[];
+    f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(empty)});
+    assert.equal(f.ids.stages.children[0].children[1].children.some(x=>x.tag==='ul'),false);
+  });
+  await check('agent Unicode limits and literal markup survive without HTML interpretation',async()=>{
+    const f=fixture();await connect(f);const s=sample();
+    s.stages[0].agents=[{id:'build',actor:'😀'.repeat(160),status:'running',detail:'漢'.repeat(580)+'<img onerror=bad()>'}];
+    f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(s)});
+    assert.equal(f.ids.main.dataset.observation,'live');assert.ok(f.ids.stages.textContent.includes(s.stages[0].agents[0].detail));
+    const literal=s.stages[0].agents[0].detail;
+    for (const field of ['actor','detail']) {
+      const invalid=sample(2);invalid.stages[0].agents=[{id:'safe',actor:'Agent',status:'running',detail:''}];
+      invalid.stages[0].agents[0][field]='😀'.repeat(field==='actor'?161:601);
+      f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(invalid)});
+      assert.equal(f.ids.main.dataset.observation,'unavailable');assert.ok(f.ids.stages.textContent.includes(literal));
+    }
+  });
+  await check('unsafe, unknown and oversized agent/state shapes preserve last confirmed snapshot',async()=>{
+    const mutations=[
+      s=>{s.extra='unknown';},s=>{s.task_id=123;},s=>{s.title=' ';},s=>{s.current='bad\u0000';},s=>{s.actor='bad\ud800';},
+      s=>{s.revision=1.5;},s=>{s.finalized='true';},s=>{s.finalized_at=s.updated_at;},s=>{s.updated_at='bad';},
+      s=>{s.stages[0].extra='unknown';},s=>{s.stages[1].id=s.stages[0].id;},s=>{s.stages[0].status=['running'];},
+      s=>{s.stages[0].agents={};},s=>{s.stages[0].agents=null;},s=>{s.stages[0].agents=Array.from({length:9},(_,i)=>({id:'a'+i,actor:'Agent',status:'running'}));},
+      s=>{s.stages[0].agents=[{id:'../unsafe',actor:'Agent',status:'running'}];},s=>{s.stages[0].agents=[{id:123,actor:'Agent',status:'running'}];},
+      s=>{s.stages[0].agents=[{id:'safe',actor:' ',status:'running'}];},s=>{s.stages[0].agents=[{id:'safe',actor:'Agent',status:'finished'}];},
+      s=>{s.stages[0].agents=[{id:'safe',actor:'Agent',status:'running',detail:null}];},s=>{s.stages[0].agents=[{id:'safe',actor:'Agent',status:'running',extra:true}];},
+      s=>{s.stages[0].agents=[{id:'safe',actor:'Agent\u0001',status:'running'}];},s=>{s.stages[0].agents=[{id:'safe',actor:'Agent',status:'running',detail:'bad\udfff'}];},
+      s=>{s.stages[0].agents=[{id:'same',actor:'One',status:'running'}];s.stages[1].agents=[{id:'same',actor:'Two',status:'pending'}];},
+      s=>{s.stages[0].agents=[[]];},s=>{s.stages[0].agents=[{id:'safe',status:'running'}];}
+    ];
+    for (const mutate of mutations) {
+      const f=fixture();await connect(f);f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result()});
+      const title=f.ids.title.textContent,stages=f.ids.stages.textContent,timestamp=f.ids.updated.title;
+      const invalid=sample(2);mutate(invalid);
+      f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(invalid)});
+      assert.equal(f.ids.main.dataset.observation,'unavailable');assert.equal(f.ids.title.textContent,title);
+      assert.equal(f.ids.stages.textContent,stages);assert.equal(f.ids.updated.title,timestamp);
+    }
+  });
+  await check('status announcements are atomic, unchanged polls are quiet, and future-clock timers stay bounded',async()=>{
+    const f=fixture();await connect(f);f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result()});
+    assert.equal(f.ids.connection.attrs.role,'status');assert.equal(f.ids.connection.attrs['aria-live'],'polite');
+    assert.equal(f.ids.connection.attrs['aria-atomic'],'true');assert.equal(f.ids.freshness.attrs['aria-atomic'],'true');
+    const writes=f.ids.connection.textWrites;f.run(2500);const call=f.messages.at(-1).message;
+    f.emit({jsonrpc:'2.0',id:call.id,result:result(sample(),false)});await settle();assert.equal(f.ids.connection.textWrites,writes);
+    const future=sample(2);future.updated_at='2099-01-01T00:00:00Z';
+    f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(future,false)});
+    assert.ok([...f.timers.values()].every(x=>x.ms<=120000));
+    assert.equal(/<(button|input|select|textarea)\b/.test(html),false); // Read-only content has no keyboard-only operation.
   });
   console.log('Bridge mock: '+count+' tests passed. Native host rendering NOT VERIFIED.');
 }
