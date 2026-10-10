@@ -97,16 +97,16 @@ class Client:
         self.process.stdin.write((json.dumps(value) + "\n").encode())
         self.process.stdin.flush()
 
-    def receive(self):
-        if not self.selector.select(4):
-            raise AssertionError("Stdio server did not respond within 4 seconds")
+    def receive(self, timeout=4):
+        if not self.selector.select(timeout):
+            raise AssertionError("Stdio server did not respond within %s seconds" % timeout)
         return json.loads(self.process.stdout.readline())
 
-    def request(self, method, params=None):
+    def request(self, method, params=None, timeout=4):
         ident = self.next_id
         self.next_id += 1
         self.send({"jsonrpc": "2.0", "id": ident, "method": method, "params": params or {}})
-        reply = self.receive()
+        reply = self.receive(timeout)
         if reply.get("id") != ident:
             raise AssertionError("Incorrect request correlation")
         return reply
@@ -976,7 +976,8 @@ class CleanupTests(unittest.TestCase):
         before = self.rows()
         self.store.db.execute("BEGIN IMMEDIATE")
         try:
-            reply = client.request("tools/call", {"name": "create_progress", "arguments": {"task_id": "new-task", **self.fields()}})
+            # SQLite waits 2 seconds for the lock; allow CI scheduling overhead.
+            reply = client.request("tools/call", {"name": "create_progress", "arguments": {"task_id": "new-task", **self.fields()}}, timeout=8)
             self.assertEqual(reply["error"]["code"], -32603)
             self.assertEqual(self.rows(), before)
         finally:
