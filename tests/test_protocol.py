@@ -774,6 +774,192 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(target.read_bytes(), b"keep")
 
 
+class ReconciliationTests(unittest.TestCase):
+    """Real stdio calls and durable SQLite, with no owner capabilities in UI."""
+    setUp = ProtocolTests.setUp
+    tearDown = ProtocolTests.tearDown
+    start = ProtocolTests.start
+    fields = ProtocolTests.fields
+    create = ProtocolTests.create
+    read = ProtocolTests.read
+    def writing(self, created, state=None):
+        return {"task_id": created["state"]["task_id"], "write_token": created["write_token"],
+            "expected_revision": (state or created["state"])["revision"]}
+
+    def display_fields(self, state):
+        return copy.deepcopy({key: state[key] for key in ("title", "actor", "current", "blocker", "stages")})
+
+    def update(self, created, state=None, **kwargs):
+        reply = self.client.call("update_progress", {**self.writing(created, state), **kwargs})
+        self.assertNotIn("isError", reply, reply)
+        return reply["structuredContent"]["state"]
+
+    def test_reconciliation_add_while_running_and_after_partial_completion(self):
+        created = self.create()
+        state = self.update(created, patch={"stages": [{"id": "build", "status": "completed", "detail": "Build verified by protocol checks"}]})
+        fields = self.display_fields(state)
+        fields["stages"][1]["status"] = "running"
+        fields["stages"].append({"id": "new-scope", "title": "New requirement", "status": "pending"})
+        updated = self.update(created, state, **fields, plan_change={"summary": "User added an export check"})
+        self.assertEqual(updated["stages"][0], state["stages"][0])
+        self.assertEqual([s["status"] for s in updated["stages"]], ["completed", "running", "pending"])
+        self.assertEqual(updated["plan"]["revision"], 1)
+        self.assertEqual(updated["plan"]["retired_stages"], [])
+        self.assertEqual(updated["task_id"], created["state"]["task_id"])
+        self.assertNotIn("open_progress_panel", self.client.tool_calls)
+        regressed = copy.deepcopy(fields)
+        regressed["stages"][0]["status"] = "running"
+        self.assertTrue(self.client.call("update_progress", {**self.writing(created, updated), **regressed})["isError"])
+        self.assertEqual(self.read(created), updated)
+
+    def test_reconciliation_remove_pending_and_completed_preserves_exact_history(self):
+        created = self.create()
+        done = self.update(created, patch={"stages": [{"id": "build", "status": "completed", "detail": "Confirmed implementation evidence"}]})
+        fields = self.display_fields(done)
+        fields["stages"] = [{"id": "replacement", "title": "Current requirement", "status": "pending"}]
+        state = self.update(created, done, **fields)
+        history = state["plan"]["retired_stages"]
+        self.assertEqual([entry["stage"] for entry in history], done["stages"])
+        self.assertEqual(history[0]["stage"]["status"], "completed")
+        self.assertEqual(history[1]["stage"]["status"], "pending")
+        self.assertTrue(all(e["retired_revision"] == 1 and e["retired_at"] == state["plan"]["changed_at"] for e in history))
+        patched = self.update(created, state, patch={"current": "Continue authorized scope"})
+        self.assertEqual(patched["plan"], state["plan"])
+        for arguments in ({"patch": {"stages": [{"id": "build", "status": "completed"}]}},
+                {**self.display_fields(patched), "stages": done["stages"]},
+                {"patch": {}, "plan": state["plan"]}):
+            self.assertTrue(self.client.call("update_progress", {**self.writing(created, patched), **arguments})["isError"])
+        self.assertEqual(self.read(created), patched)
+
+    def test_reconciliation_rename_reorder_and_semantic_refinement_keep_ids(self):
+        created = self.create()
+        renamed = self.update(created, patch={"stages": [{"id": "verify", "title": "Verify the revised export"}]})
+        self.assertEqual(renamed["stages"][0], created["state"]["stages"][0])
+        self.assertEqual(renamed["stages"][1]["id"], "verify")
+        fields = self.display_fields(renamed)
+        fields["stages"] = [fields["stages"][0], {"id": "later", "title": "Later work", "status": "pending"}, fields["stages"][1]]
+        expanded = self.update(created, renamed, **fields)
+        fields = self.display_fields(expanded)
+        fields["stages"][1:] = reversed(fields["stages"][1:])
+        ordered = self.update(created, expanded, **fields)
+        self.assertEqual([s["id"] for s in ordered["stages"]], ["build", "verify", "later"])
+        refined = self.update(created, ordered, patch={"stages": [{"id": "verify", "detail": "Includes an explicit export check"}]},
+            plan_change={"summary": "Export verification refined"})
+        self.assertEqual(refined["plan"]["revision"], 4)
+        self.assertEqual(refined["stages"][0], ordered["stages"][0])
+
+    def test_reconciliation_four_active_agents_require_confirmed_patch_before_retirement(self):
+        created = self.create()
+        active = [{"id": "assignment-" + str(i), "actor": "Worker " + str(i), "status": "running", "detail": "Assigned work"} for i in range(4)]
+        state = self.update(created, patch={"stages": [{"id": "build", "agents": active}]})
+        fields = self.display_fields(state)
+        fields["stages"].append({"id": "extra", "title": "Added unrelated work", "status": "pending"})
+        added = self.update(created, state, **fields, plan_change={"summary": "Additional requirement"})
+        self.assertEqual(added["stages"][0]["agents"], active)
+        removal = self.display_fields(added)
+        removal["stages"] = removal["stages"][1:]
+        denied = self.client.call("update_progress", {**self.writing(created, added), **removal})
+        self.assertTrue(denied["isError"])
+        self.assertIn("confirm", denied["content"][0]["text"])
+        self.assertEqual(self.read(created), added)
+        terminal = [{**a, "status": "completed" if i == 0 else "cancelled", "detail": "Verified result" if i == 0 else "Cancellation confirmed"} for i, a in enumerate(active)]
+        settled = self.update(created, added, patch={"stages": [{"id": "build", "agents": terminal}]})
+        removed = self.update(created, settled, **removal, plan_change={"summary": "Affected assignments reconciled"})
+        self.assertEqual(removed["plan"]["retired_stages"][0]["stage"]["agents"], terminal)
+        # Late reports cannot restore the retired stage, even with a fresh CAS.
+        for arguments in ({"patch": {"stages": [{"id": "build", "agents": active}]}},
+                self.display_fields(added),
+                {**self.display_fields(removed), "stages": [{"id": "fresh", "title": "Fresh work", "status": "running", "agents": active}]}):
+            self.assertTrue(self.client.call("update_progress", {**self.writing(created, removed), **arguments})["isError"])
+        self.assertEqual(self.read(created), removed)
+
+    def test_reconciliation_cas_reconstructs_latest_verified_progress_once(self):
+        from concurrent.futures import ThreadPoolExecutor
+        created = self.create()
+        other = self.start()
+        fields = self.display_fields(created["state"])
+        fields["stages"].append({"id": "added", "title": "Authorized addition", "status": "pending"})
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            structural = pool.submit(self.client.call, "update_progress", {**self.writing(created), **fields, "plan_change": {"summary": "Added check"}})
+            progress = pool.submit(other.call, "update_progress", {**self.writing(created), "patch": {"stages": [{"id": "build", "status": "completed", "detail": "Latest verified result"}]}})
+            first, second = structural.result(), progress.result()
+        self.assertEqual(sum(bool(r.get("isError")) for r in (first, second)), 1)
+        latest = self.read(created)
+        if first.get("isError"):
+            intent = self.display_fields(latest)
+            intent["stages"].append(fields["stages"][-1])
+            latest = self.update(created, latest, **intent, plan_change={"summary": "Added check"})
+        else:
+            latest = other.call("update_progress", {**self.writing(created, latest), "patch": {"stages": [{"id": "build", "status": "completed", "detail": "Latest verified result"}]}})["structuredContent"]["state"]
+        self.assertEqual(latest["revision"], 3)
+        self.assertEqual(latest["stages"][0]["status"], "completed")
+        self.assertEqual(latest["stages"][0]["detail"], "Latest verified result")
+        self.assertEqual(latest["stages"][-1]["id"], "added")
+        self.assertEqual(self.client.tool_calls.count("get_progress"), 1)
+        stale = self.client.call("update_progress", {**self.writing(created, latest), **fields})
+        self.assertTrue(stale["isError"])
+        self.assertEqual(self.read(created), latest)
+
+    def test_reconciliation_retained_compaction_and_finalization_preserve_history(self):
+        created = self.create()
+        self.client.call("open_progress_panel", {"task_id": "task-test", "read_token": created["read_token"]})
+        first = self.update(created, patch={"stages": [{"id": "verify", "title": "Changed scope"}]}, plan_change={"summary": "Scope refined"})
+        self.client.close()
+        self.client = self.start()
+        retained = self.read(created)
+        self.assertEqual(retained, first)
+        fields = self.display_fields(retained)
+        fields["stages"] = fields["stages"][:1]
+        reconciled = self.update(created, retained, **fields)
+        finalized = self.client.call("finish_progress", {**self.writing(created, reconciled), **self.display_fields(reconciled)})["structuredContent"]["state"]
+        self.assertEqual(finalized["plan"], reconciled["plan"])
+        self.assertTrue(self.client.call("update_progress", {**self.writing(created, finalized), "patch": {}, "plan_change": {"summary": "Must reject"}})["isError"])
+        self.assertEqual(self.read(created), finalized)
+        self.assertEqual(self.client.tool_calls.count("create_progress"), 0)
+        self.assertEqual(self.client.tool_calls.count("open_progress_panel"), 0)
+
+    def test_reconciliation_malformed_changes_and_history_bounds_are_atomic(self):
+        created = self.create()
+        malformed = [None, [], {}, {"summary": ""}, {"summary": " "}, {"summary": "x" * 601},
+            {"summary": "\ud800"}, {"summary": "valid", "retired_stages": []}, {"summary": 1}]
+        for change in malformed:
+            self.assertTrue(self.client.call("update_progress", {**self.writing(created), "patch": {}, "plan_change": change})["isError"])
+            self.assertEqual(self.read(created), created["state"])
+        state = created["state"]
+        for i in range(31):
+            fields = self.display_fields(state)
+            fields["stages"] = [{"id": "fresh-" + str(i), "title": "Fresh pending work", "status": "pending"}]
+            state = self.update(created, state, **fields)
+        self.assertEqual(len(state["plan"]["retired_stages"]), 32)
+        fields = self.display_fields(state)
+        fields["stages"] = [{"id": "overflow", "title": "Cannot prune history", "status": "pending"}]
+        rejected = self.client.call("update_progress", {**self.writing(created, state), **fields})
+        self.assertTrue(rejected["isError"])
+        self.assertIn("32 retired", rejected["content"][0]["text"])
+        self.assertEqual(self.read(created), state)
+
+    def test_reconciliation_complete_snapshot_bound_includes_retirement_evidence(self):
+        fields = {"title": "Large evidence", "stages": [{"id": "old-" + str(i), "title": "x" * 240,
+            "status": "completed", "actor": "x" * 160, "detail": "x" * 600} for i in range(32)]}
+        created = self.client.call("create_progress", {"task_id": "large", **fields})["structuredContent"]
+        fields["stages"] = [{**s, "id": "new-" + str(i), "status": "pending"} for i, s in enumerate(fields["stages"])]
+        # Retirement doubles stored evidence; the request alone is below 64 KiB.
+        self.assertLess(len(json.dumps(fields).encode()), 65536)
+        rejected = self.client.call("update_progress", {**self.writing(created), **fields})
+        self.assertTrue(rejected["isError"])
+        self.assertIn("64 KiB", rejected["content"][0]["text"])
+        self.assertEqual(self.read(created, "large"), created["state"])
+
+    def test_reconciliation_legacy_snapshot_has_no_metadata_until_plan_changes(self):
+        created = self.create()
+        self.assertNotIn("plan", self.read(created))
+        normal = self.update(created, patch={"current": "Normal progress"})
+        self.assertNotIn("plan", normal)
+        changed = self.update(created, normal, patch={"stages": [{"id": "verify", "title": "Revised requirement"}]})
+        self.assertEqual(changed["plan"]["revision"], 1)
+        self.assertEqual(changed["plan"]["retired_stages"], [])
+
+
 class CleanupTests(unittest.TestCase):
     """Retention tests use only a fresh private SQLite directory per test."""
     def setUp(self):

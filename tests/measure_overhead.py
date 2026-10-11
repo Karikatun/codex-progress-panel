@@ -112,6 +112,60 @@ def measure(mode, directory):
     return totals, final_fields
 
 
+def measure_reconciliation(kind, directory):
+    """Compare one ordinary full write with one structural or semantic write."""
+    store = server.Store(directory)
+    app = server.Server(store)
+    app.initialized = app.ready = True
+    totals = {"calls": 0, "request_bytes": 0, "response_bytes": 0}
+    operations = {name: 0 for name in ("BEGIN", "SELECT", "INSERT", "UPDATE", "DELETE", "COMMIT", "ROLLBACK")}
+    def observe(sql):
+        name = sql.lstrip().split(" ", 1)[0].upper()
+        if name in operations:
+            operations[name] += 1
+    store.db.set_trace_callback(observe)
+    def call(name, arguments):
+        totals["calls"] += 1
+        request = {"jsonrpc": "2.0", "id": totals["calls"], "method": "tools/call", "params": {"name": name, "arguments": arguments}}
+        totals["request_bytes"] += wire_bytes(request)
+        response = app.dispatch(request)
+        totals["response_bytes"] += wire_bytes(response)
+        assert not response.get("error") and not response["result"].get("isError"), "Reconciliation measurement failed"
+        return response["result"]["structuredContent"]
+    initial = fields()
+    initial["stages"][0]["status"] = "completed"
+    created = call("create_progress", {"task_id": "reconciliation", **initial})
+    state = created["state"]
+    args = {"task_id": "reconciliation", "write_token": created["write_token"], "expected_revision": state["revision"]}
+    if kind == "affected_agents":
+        state = call("update_progress", {**args, "patch": {"stages": [{"id": "build", "agents": [
+            {**agent, "status": "cancelled", "detail": "Cancellation confirmed"} for agent in state["stages"][1]["agents"]]}]}})["state"]
+        args["expected_revision"] = state["revision"]
+    proposed = {key: copy.deepcopy(state[key]) for key in ("title", "actor", "current", "blocker", "stages")}
+    proposed["current"] = "Continue the latest authorized scope."
+    if kind == "semantic_patch":
+        arguments = {"patch": {"current": proposed["current"]}, "plan_change": {"summary": "User refined verification."}}
+    else:
+        if kind != "ordinary_full":
+            index = 1 if kind == "affected_agents" else 0
+            proposed["stages"].pop(index)
+            proposed["stages"].append({"id": "new-check", "title": "Check the new requirement", "status": "pending"})
+        arguments = proposed
+        if kind in ("structural_summary", "affected_agents"):
+            arguments["plan_change"] = {"summary": "User added a check and removed prior work."}
+    before = dict(operations)
+    request_before, response_before = totals["request_bytes"], totals["response_bytes"]
+    state = call("update_progress", {**args, **arguments})["state"]
+    totals.update(write_request_bytes=totals["request_bytes"] - request_before,
+        write_response_bytes=totals["response_bytes"] - response_before,
+        write_sql_operations={key: operations[key] - before[key] for key in operations},
+        all_sql_operations=operations, stored_state_bytes=len(server.serialized_state(state).encode("utf-8")),
+        plan_metadata_bytes=wire_bytes(state["plan"]) - 1 if "plan" in state else 0,
+        retained_rows=store.db.execute("SELECT count(*) FROM tasks").fetchone()[0])
+    store.close()
+    return totals
+
+
 if __name__ == "__main__":
     os.umask(0o077)
     with tempfile.TemporaryDirectory(prefix="progress-cost-") as temporary:
@@ -121,6 +175,10 @@ if __name__ == "__main__":
         assert full_state == patch_state, "Compared final snapshots differ"
         assert full["calls"] == patch["calls"] == 9
         assert full["sql_mutations"] == patch["sql_mutations"] == {"INSERT": 1, "UPDATE": 7, "DELETE": 0}
+        reconciliation = {kind: measure_reconciliation(kind, root / kind) for kind in
+            ("ordinary_full", "structural_auto", "structural_summary", "semantic_patch", "affected_agents")}
+        assert all(item["write_sql_operations"] == {"BEGIN": 1, "SELECT": 1, "INSERT": 0, "UPDATE": 1,
+            "DELETE": 0, "COMMIT": 1, "ROLLBACK": 0} for item in reconciliation.values())
         print(json.dumps({"scenario": "six stages, four agents, six milestone updates, create/open/finish",
             "scope": "in-process dispatch + serialization + local SQLite; excludes host, startup, UI polls and transport latency",
-            "full": full, "patch": patch}, ensure_ascii=False, indent=2))
+            "full": full, "patch": patch, "reconciliation": reconciliation}, ensure_ascii=False, indent=2))

@@ -1,8 +1,8 @@
-# codex-progress-panel 0.1.2
+# codex-progress-panel 0.2.0
 
 [English](#english) | [Русский](#русский)
 
-Unpublished `0.1.2` release candidate: reliable stale-state observation, agent summaries, compact patch updates, and explicit opt-in cleanup of finalized history. Неопубликованный кандидат `0.1.2`: надёжное отображение устаревшего состояния, сводки агентов, компактные patch-обновления и явно включаемая очистка финализированной истории.
+Unpublished `0.2.0` release candidate: reliable stale-state observation, agent summaries, compact patch updates, and explicit opt-in cleanup of finalized history. Неопубликованный кандидат `0.2.0`: надёжное отображение устаревшего состояния, сводки агентов, компактные patch-обновления и явно включаемая очистка финализированной истории.
 
 ## English
 
@@ -12,7 +12,7 @@ A local stdio MCP server and full Codex plugin. Each assistant execution gets a 
 
 Use macOS or Linux, Node.js 22+, npm/npx, and Python 3.9+ as `python3` in PATH. Windows is unsupported. The full plugin launches Python directly and does not need the Node launcher. The server has no third-party Python dependencies.
 
-This guide covers the unpublished candidate [`codex-progress-panel@0.1.2`](https://www.npmjs.com/package/codex-progress-panel/v/0.1.2). Configure a stdio MCP server:
+This guide covers the unpublished candidate [`codex-progress-panel@0.2.0`](https://www.npmjs.com/package/codex-progress-panel/v/0.2.0). Configure a stdio MCP server:
 
 ```json
 {"mcpServers":{"progress":{"command":"npx","args":["-y","codex-progress-panel"]}}}
@@ -51,11 +51,17 @@ The server reads the file once at startup, before opening SQLite. A missing file
 
 An MCP server entry does not install the `progress-panel` skill. The package also includes `plugin.json`, `mcp.json`, the Python server, HTML UI, and `skills/progress-panel/SKILL.md`. Use a reviewed marketplace installation for the full plugin. The host controls rendering and placement.
 
-The source repository's `distribution/marketplace.npm.json` pins npm version `0.1.2`. A host using that source needs npm and npm marketplace support. Full-plugin installation and native UI from the npm source remain unverified. The local-source route is documented in the repository guide. For version `0.1.1`, use source branch `prep/v0.1.1`.
+The source repository's `distribution/marketplace.npm.json` pins npm version `0.2.0`. A host using that source needs npm and npm marketplace support. Full-plugin installation and native UI from the npm source remain unverified. The local-source route is documented in the repository guide. For version `0.1.1`, use source branch `prep/v0.1.1`.
 
 Start a new chat after installation. Example request: **«Покажи этапы работы в панели и обновляй её по мере выполнения задачи.»**
 
-Keep `{task_id, write_token, read_token, revision, known snapshot}` private through compaction when available. Only the root owner writes; subagents get no capabilities. Update requires `expected_revision` and either a complete snapshot or `patch`; finish requires the complete final snapshot. A patch preserves omitted fields and names existing stages by id; it cannot add, delete or reorder stages. Empty summaries clear text and `agents: []` clears an agent list. Responses remain complete. Optional `stage.agents` contains up to eight summaries; agent completion never completes the stage. After a stale revision, read with `get_progress` and retry the intended write once. Stop writes after finalization. Lost tokens require text progress; do not open a replacement widget in that execution. A crash or Stop before successful finish can leave the snapshot unfinished. Every unfinished snapshot becomes stale after two minutes, even with completed stages. Same-revision reads never refresh the confirmed update time. Failed reads retain the last snapshot and show unavailable/reconnection status. The UI never changes stages or finalizes from elapsed time. Native candidate interruption, restart, four-agent layout and accessibility still need a host check.
+Keep `{task_id, write_token, read_token, revision, known snapshot, assignment associations}` private through compaction when available. Only the root owner writes; subagents get no capabilities. Update requires `expected_revision` and either a complete snapshot or `patch`; finish requires the complete final snapshot. A patch preserves omitted fields and names existing stages by id; it cannot add, delete or reorder stages. Empty summaries clear text and `agents: []` clears an agent list. Responses remain complete. Optional `stage.agents` contains up to eight summaries; agent completion never completes the stage. After a stale revision, read with `get_progress` and retry the intended write once. Stop writes after finalization. Lost tokens require text progress; do not open a replacement widget in that execution. A crash or Stop before successful finish can leave the snapshot unfinished. Every unfinished snapshot becomes stale after two minutes, even with completed stages. Same-revision reads never refresh the confirmed update time. Failed reads retain the last snapshot and show unavailable/reconnection status. The UI never changes stages or finalizes from elapsed time. Native candidate interruption, restart, four-agent layout and accessibility still need a host check.
+
+### Dynamic plans
+
+User steering during active work keeps the same execution and widget. Keep unchanged ids and verified completion; new requirements and re-verification get fresh ids. `update_progress` accepts optional `plan_change: {"summary":"User added an export check"}` (nonblank, 600 codepoints) beside patch or full mode. Patches refine existing work; full snapshots add, retire or reorder stages. Server-owned optional `state.plan` records a plan revision, change time, summary and up to 32 exact retired stages. Structural calls derive metadata without a summary; old snapshots stay readable. The UI shows current stages and a localized Plan updated notice with stable DOM nodes.
+
+Confirm affected delegated completion/cancellation through the existing authorized mechanism and publish a patch before retirement. Agent-only `cancelled` means confirmed cancellation. Retain unaffected and terminal summaries; bind reports to live stage and assignment ids, give superseded assignments fresh ids and ignore stale reports. The server rejects unresolved structural removal, completed regressions and retired id reuse; real cancellation, semantic scope and root identity remain owner responsibilities. On CAS conflict read once and reconstruct from the latest verified state, then retry once. Finalization preserves immutable history. The 32-record or complete 64 KiB bound rejects atomically without pruning evidence. Compaction retains capabilities and assignment associations; lost capabilities use text progress.
 
 ### State, updates, and removal
 
@@ -77,7 +83,7 @@ See the repository guide for all tools, limits, tests, and native acceptance: [E
 
 Используйте macOS или Linux, Node.js 22+, npm/npx и Python 3.9+ под именем `python3` в PATH. Windows не поддерживается. Полный плагин запускает Python напрямую и не требует запускающего модуля Node. У сервера нет сторонних зависимостей Python.
 
-Это руководство для неопубликованного кандидата [`codex-progress-panel@0.1.2`](https://www.npmjs.com/package/codex-progress-panel/v/0.1.2). Настройте stdio MCP-сервер:
+Это руководство для неопубликованного кандидата [`codex-progress-panel@0.2.0`](https://www.npmjs.com/package/codex-progress-panel/v/0.2.0). Настройте stdio MCP-сервер:
 
 ```json
 {"mcpServers":{"progress":{"command":"npx","args":["-y","codex-progress-panel"]}}}
@@ -116,11 +122,17 @@ npx -y codex-progress-panel --help
 
 MCP-запись не устанавливает skill `progress-panel`. Пакет также содержит `plugin.json`, `mcp.json`, сервер Python, HTML UI и `skills/progress-panel/SKILL.md`. Для полного плагина используйте проверенную установку через marketplace. Хост управляет отображением и размещением.
 
-Файл `distribution/marketplace.npm.json` в репозитории закрепляет npm-версию `0.1.2`. Хосту нужны npm и поддержка npm-источников marketplace. Установка полного плагина и встроенный UI из npm-источника пока не проверены. Установка из локального исходного кода описана в руководстве репозитория. Для версии `0.1.1` используйте исходный код из ветки `prep/v0.1.1`.
+Файл `distribution/marketplace.npm.json` в репозитории закрепляет npm-версию `0.2.0`. Хосту нужны npm и поддержка npm-источников marketplace. Установка полного плагина и встроенный UI из npm-источника пока не проверены. Установка из локального исходного кода описана в руководстве репозитория. Для версии `0.1.1` используйте исходный код из ветки `prep/v0.1.1`.
 
 После установки начните новый чат. Пример запроса: **«Покажи этапы работы в панели и обновляй её по мере выполнения задачи.»**
 
-Приватно сохраняйте `{task_id, write_token, read_token, revision, known snapshot}` через сжатие контекста, когда это возможно. Только основной владелец пишет прогресс; субагенты не получают capabilities. Обновление требует `expected_revision` и полный снимок или `patch`; завершение требует полный итоговый снимок. Patch сохраняет пропущенные поля и меняет существующие этапы по id, без добавления, удаления или перестановки. Пустые сводки очищают текст, `agents: []` очищает список агентов. Ответ остаётся полным. Необязательное `stage.agents` содержит до восьми сводок; завершение агента не завершает этап. После устаревшей ревизии прочитайте снимок через `get_progress` и повторите нужную запись один раз. Прекратите запись после финализации. При потере токенов используйте текстовые обновления; не открывайте заменяющий виджет в этом запуске. Сбой или Stop до успешного завершения могут оставить снимок незавершённым. Любой такой снимок устаревает через две минуты, даже с завершёнными этапами. Чтение той же ревизии не меняет время подтверждённого обновления. Ошибка чтения сохраняет снимок и показывает недоступность/переподключение. UI не меняет этапы и не финализирует по времени. Прерывание, перезапуск, четыре агента и доступность кандидата ещё требуют проверки на хосте.
+Приватно сохраняйте `{task_id, write_token, read_token, revision, known snapshot, assignment associations}` через сжатие контекста, когда это возможно. Только основной владелец пишет прогресс; субагенты не получают capabilities. Обновление требует `expected_revision` и полный снимок или `patch`; завершение требует полный итоговый снимок. Patch сохраняет пропущенные поля и меняет существующие этапы по id, без добавления, удаления или перестановки. Пустые сводки очищают текст, `agents: []` очищает список агентов. Ответ остаётся полным. Необязательное `stage.agents` содержит до восьми сводок; завершение агента не завершает этап. После устаревшей ревизии прочитайте снимок через `get_progress` и повторите нужную запись один раз. Прекратите запись после финализации. При потере токенов используйте текстовые обновления; не открывайте заменяющий виджет в этом запуске. Сбой или Stop до успешного завершения могут оставить снимок незавершённым. Любой такой снимок устаревает через две минуты, даже с завершёнными этапами. Чтение той же ревизии не меняет время подтверждённого обновления. Ошибка чтения сохраняет снимок и показывает недоступность/переподключение. UI не меняет этапы и не финализирует по времени. Прерывание, перезапуск, четыре агента и доступность кандидата ещё требуют проверки на хосте.
+
+### Изменение плана
+
+Уточнения пользователя во время работы сохраняют тот же запуск и виджет. Сохраняйте неизменные id и проверенное завершение; новым требованиям и повторной проверке нужны новые id. `update_progress` принимает необязательный `plan_change: {"summary":"Добавлена проверка экспорта"}` (непустой, до 600 кодовых точек) рядом с patch или полным снимком. Patch уточняет существующую работу, полный снимок добавляет, снимает и переставляет этапы. Серверное необязательное `state.plan` содержит ревизию плана, время, сводку и до 32 точных записей снятых этапов. Структурные вызовы создают метаданные без сводки; старые снимки читаются. UI показывает текущие этапы, подпись «План обновлён» и сохраняет DOM-элементы по id.
+
+Подтвердите завершение/отмену затронутых поручений через существующий разрешённый механизм и сначала опубликуйте patch. Агентский `cancelled` означает подтверждённую отмену. Сохраняйте незатронутые и итоговые сводки; привязывайте отчёты к актуальным id этапа и поручения, заменённым поручениям давайте новый id, запоздалые результаты игнорируйте. Сервер отклоняет структурное удаление нерешённых поручений, сброс завершения и возврат снятых id; фактическая отмена, смысл требований и личность владельца остаются его ответственностью. При CAS-конфликте прочитайте снимок один раз, восстановите изменение из нового проверенного состояния и повторите запись один раз. Финализация сохраняет неизменяемую историю. Лимит 32 записи или 64 KiB отклоняет всю запись без очистки доказательств. Сжатие контекста сохраняет capabilities и привязки поручений; потеря capabilities оставляет текстовые обновления.
 
 ### Данные, обновление и удаление
 

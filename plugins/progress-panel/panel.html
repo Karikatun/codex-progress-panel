@@ -13,6 +13,8 @@ h1{font-size:20px;line-height:1.3;letter-spacing:-.02em;font-weight:650;margin:0
 .current{border-left:3px solid var(--accent);padding:2px 0 2px 12px;margin:0 0 20px}.current-label{font-size:11px;color:var(--color-text-secondary,var(--muted));margin:0 0 4px}.current p:last-child{margin:0;white-space:pre-wrap}
 .blocker{background-color:var(--warn-soft);color:var(--warn);padding:12px 14px;margin:0 0 20px;border-radius:6px}.blocker strong{display:block;font-size:12px;margin-bottom:3px}.blocker p{margin:0;white-space:pre-wrap}
 .freshness{color:var(--warn);font-size:12px;line-height:1.5;margin:18px 0 0}
+.plan-change{color:var(--color-text-secondary,var(--muted));font-size:12px;line-height:1.5;margin:0 0 18px;white-space:pre-wrap}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
 ol{margin:0;padding:0;list-style:none}#stages>li{display:grid;grid-template-columns:24px minmax(0,1fr);column-gap:12px;position:relative;padding:0 0 22px}#stages>li:not(:last-child):before{content:"";position:absolute;left:11px;top:27px;bottom:4px;border-left:1px solid var(--color-border-primary,var(--line))}#stages>li:last-child{padding-bottom:0}
 .mark{width:24px;height:24px;display:grid;place-items:center;border:1px solid var(--color-border-primary,var(--line));border-radius:50%;font-size:11px;font-variant-numeric:tabular-nums;color:var(--color-text-secondary,var(--muted));background-color:var(--color-background-primary,var(--paper))}
 #stages>li[data-status=completed] .mark{color:var(--accent);background-color:var(--soft);border-color:transparent}#stages>li[data-status=running] .mark{border:2px solid var(--accent);color:var(--accent);font-weight:700}#stages>li[data-status=blocked] .mark{border-color:var(--warn);color:var(--warn)}
@@ -32,6 +34,8 @@ ol{margin:0;padding:0;list-style:none}#stages>li{display:grid;grid-template-colu
 <div id="empty" class="empty" hidden><strong id="empty-title">No plan is linked yet</strong><span id="empty-text">Open the panel for this task to see its stages and current work.</span></div>
 <section id="current" class="current" aria-label="Current work" hidden><p id="current-label" class="current-label">Now</p><p id="current-text"></p></section>
 <aside id="blocker" class="blocker" aria-label="Blocker" hidden><strong id="blocker-title">Work is paused</strong><p id="blocker-text"></p></aside>
+<p id="plan-change" class="plan-change" hidden></p>
+<div id="plan-announcements" class="sr-only" role="log" aria-live="polite" aria-atomic="false" aria-relevant="additions"></div>
 <ol id="stages" aria-label="Stages"></ol>
 <p id="freshness" class="freshness" role="status" aria-live="polite" aria-atomic="true" hidden></p>
 <footer id="footer" hidden><span id="actor"></span><span id="updated"></span></footer>
@@ -48,7 +52,7 @@ ol{margin:0;padding:0;list-style:none}#stages>li{display:grid;grid-template-colu
       progress:'Work progress',title:'Task stages',connecting:'Connecting to the panel…',emptyTitle:'No plan is linked yet',
       emptyText:'Open the panel for this task to see its stages and current work.',current:'Current work',now:'Now',
       blocker:'Blocker',paused:'Work is paused',stages:'Stages',agents:'Agents',actorMissing:'Actor not specified',
-      labels:{pending:'Pending',running:'In progress',blocked:'Blocked',completed:'Completed'},
+      labels:{pending:'Pending',running:'In progress',blocked:'Blocked',completed:'Completed',cancelled:'Cancelled'},planUpdated:'Plan updated',planChanges:'Plan changes',
       closed:'Panel closed',noReply:'No response from the host',fixed:'Finalized',updated:'Updated',
       stale:'No confirmed update for 2 minutes or longer. Work may still be continuing; the result is not finalized.',
       liveLabel:'Live',staleLabel:'Stale data',lastConfirmed:'Last confirmed update:',
@@ -63,7 +67,7 @@ ol{margin:0;padding:0;list-style:none}#stages>li{display:grid;grid-template-colu
       progress:'Ход работы',title:'Этапы задачи',connecting:'Подключение к панели…',emptyTitle:'План ещё не привязан',
       emptyText:'После открытия панели для этой задачи здесь появятся этапы и текущая работа.',current:'Текущая работа',now:'Сейчас',
       blocker:'Препятствие',paused:'Работа приостановлена',stages:'Этапы',agents:'Агенты',actorMissing:'Исполнитель не указан',
-      labels:{pending:'Ожидает',running:'В работе',blocked:'Приостановлен',completed:'Завершён'},
+      labels:{pending:'Ожидает',running:'В работе',blocked:'Приостановлен',completed:'Завершён',cancelled:'Отменён'},planUpdated:'План обновлён',planChanges:'Изменения плана',
       closed:'Панель закрыта',noReply:'Нет ответа от приложения',fixed:'Зафиксировано',updated:'Обновлено',
       stale:'Подтверждённых обновлений нет 2 минуты или дольше. Работа может продолжаться; итог не зафиксирован.',
       liveLabel:'Актуальные данные',staleLabel:'Данные устарели',lastConfirmed:'Последнее подтверждённое обновление:',
@@ -79,9 +83,11 @@ ol{margin:0;padding:0;list-style:none}#stages>li{display:grid;grid-template-colu
   document.title = strings.title;
   for (const [id,key] of [['eyebrow','progress'],['title','title'],['connection','connecting'],['empty-title','emptyTitle'],
       ['empty-text','emptyText'],['current-label','now'],['blocker-title','paused']]) $(id).textContent=strings[key];
-  for (const [id,key] of [['main','progress'],['current','current'],['blocker','blocker'],['stages','stages']]) $(id).setAttribute('aria-label',strings[key]);
+  for (const [id,key] of [['main','progress'],['current','current'],['blocker','blocker'],['stages','stages'],['plan-announcements','planChanges']]) $(id).setAttribute('aria-label',strings[key]);
   const idPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
   const pending = new Map();
+  const stageViews = new Map();
+  let announcedPlanRevision = null;
   let nextId = 1, hostOrigin = '*', connected = false, closed = false;
   let state = null, taskId = null, readToken = null, timer = null, ageTimer = null, failures = 0, pollInFlight = false;
   let transportUnavailable = true, transportMessage = strings.connecting;
@@ -117,28 +123,57 @@ ol{margin:0;padding:0;list-style:none}#stages>li{display:grid;grid-template-colu
       && Object.keys(v).every(key => required.includes(key) || optional.includes(key));
   }
   function validId(v) {return typeof v === 'string' && idPattern.test(v);}
-  function validStatus(v) {return typeof v === 'string' && Object.prototype.hasOwnProperty.call(labels,v);}
+  function validStatus(v, agent = false) {return typeof v === 'string' && Object.prototype.hasOwnProperty.call(labels,v) && (agent || v !== 'cancelled');}
+  function validStage(x, stages, agents) {
+    if (!exactObject(x,['id','title','status','actor','detail'],['agents']) || !validId(x.id) || stages.has(x.id)
+        || !validText(x.title,240,false) || !validStatus(x.status) || !validText(x.actor,160) || !validText(x.detail,600)) return false;
+    stages.add(x.id);
+    if (!Object.prototype.hasOwnProperty.call(x,'agents')) return true;
+    return Array.isArray(x.agents) && x.agents.length <= 8 && x.agents.every(a => {
+      if (!exactObject(a,['id','actor','status'],['detail']) || !validId(a.id) || agents.has(a.id)
+          || !validText(a.actor,160,false) || !validStatus(a.status,true) || !validText(a.detail ?? '',600)
+          || (Object.prototype.hasOwnProperty.call(a,'detail') && typeof a.detail !== 'string')) return false;
+      agents.add(a.id);return true;
+    });
+  }
+  function validPlan(plan, stages, agents) {
+    return exactObject(plan,['revision','changed_at','summary','retired_stages'])
+      && Number.isSafeInteger(plan.revision) && plan.revision > 0
+      && validText(plan.changed_at,40,false) && Number.isFinite(Date.parse(plan.changed_at)) && validText(plan.summary,600)
+      && Array.isArray(plan.retired_stages) && plan.retired_stages.length <= 32
+      && plan.retired_stages.every(entry => exactObject(entry,['stage','retired_revision','retired_at'])
+        && Number.isSafeInteger(entry.retired_revision) && entry.retired_revision > 0 && entry.retired_revision <= plan.revision
+        && validText(entry.retired_at,40,false) && Number.isFinite(Date.parse(entry.retired_at))
+        && validStage(entry.stage,stages,agents) && (entry.stage.agents ?? []).every(a => ['completed','cancelled'].includes(a.status)));
+  }
   function validState(s) {
     const stages = new Set(), agents = new Set();
-    return exactObject(s,['task_id','revision','title','current','blocker','actor','updated_at','finalized','finalized_at','stages'])
+    return exactObject(s,['task_id','revision','title','current','blocker','actor','updated_at','finalized','finalized_at','stages'],['plan'])
       && validId(s.task_id) && Number.isSafeInteger(s.revision) && s.revision > 0
       && validText(s.title,240,false) && validText(s.current,600) && validText(s.blocker,600)
       && typeof s.finalized === 'boolean'
       && (s.finalized ? validText(s.finalized_at,40) && s.finalized_at === s.updated_at : s.finalized_at === null)
       && validText(s.actor,600) && validText(s.updated_at,40) && Number.isFinite(Date.parse(s.updated_at))
       && Array.isArray(s.stages) && s.stages.length > 0 && s.stages.length <= 32
-      && s.stages.every(x => {
-        if (!exactObject(x,['id','title','status','actor','detail'],['agents']) || !validId(x.id) || stages.has(x.id)
-            || !validText(x.title,240,false) || !validStatus(x.status) || !validText(x.actor,160) || !validText(x.detail,600)) return false;
-        stages.add(x.id);
-        if (!Object.prototype.hasOwnProperty.call(x,'agents')) return true;
-        return Array.isArray(x.agents) && x.agents.length <= 8 && x.agents.every(a => {
-          if (!exactObject(a,['id','actor','status'],['detail']) || !validId(a.id) || agents.has(a.id)
-              || !validText(a.actor,160,false) || !validStatus(a.status) || !validText(a.detail ?? '',600)
-              || (Object.prototype.hasOwnProperty.call(a,'detail') && typeof a.detail !== 'string')) return false;
-          agents.add(a.id);return true;
-        });
-      }) && (!s.stages.some(x => x.status === 'blocked') || s.blocker.trim().length > 0);
+      && s.stages.every(x => validStage(x,stages,agents))
+      && (!s.stages.some(x => x.status === 'blocked') || s.blocker.trim().length > 0)
+      && (!Object.prototype.hasOwnProperty.call(s,'plan') || (validPlan(s.plan,stages,agents) && s.plan.revision <= s.revision));
+  }
+  function element(tag, className = '') {const node=document.createElement(tag);node.className=className;return node;}
+  function text(node, value) {if (node.textContent !== value) node.textContent=value;}
+  function syncRows(parent, rows) {
+    rows.forEach((row,index) => {if (parent.children[index] !== row) parent.insertBefore(row,parent.children[index] ?? null);});
+    for (const row of Array.from(parent.children)) if (!rows.includes(row)) row.remove();
+  }
+  function stageView() {
+    const row=element('li'),mark=element('span','mark'),body=element('div'),top=element('div','stage-top');
+    const title=element('p','stage-title'),status=element('span','stage-status'),detail=element('p','stage-detail'),actor=element('p','actor');
+    const agents=element('ul','agents');mark.setAttribute('aria-hidden','true');top.append(title,status);row.append(mark,body);
+    return {row,mark,body,top,title,status,detail,actor,agents,agentViews:new Map()};
+  }
+  function agentView() {
+    const row=element('li','agent'),top=element('div','agent-top'),name=element('p','agent-name'),status=element('span','agent-status'),detail=element('p','agent-detail');
+    top.append(name,status);return {row,top,name,status,detail};
   }
   function render(s) {
     $('title').textContent = s.title;
@@ -147,34 +182,36 @@ ol{margin:0;padding:0;list-style:none}#stages>li{display:grid;grid-template-colu
     $('current-text').textContent = s.current;
     $('blocker').hidden = !s.blocker;
     $('blocker-text').textContent = s.blocker;
-    const list = document.createDocumentFragment();
-    s.stages.forEach((stage,index) => {
-      const row = document.createElement('li');row.dataset.status = stage.status;
-      const mark = document.createElement('span');mark.className = 'mark';mark.setAttribute('aria-hidden','true');
-      mark.textContent = stage.status === 'completed' ? '✓' : stage.status === 'blocked' ? '!' : String(index + 1);
-      const body = document.createElement('div');
-      const top = document.createElement('div');top.className = 'stage-top';
-      const title = document.createElement('p');title.className = 'stage-title';title.textContent = stage.title;
-      const status = document.createElement('span');status.className = 'stage-status';status.textContent = labels[stage.status];
-      top.append(title,status);body.append(top);
-      if (stage.detail) {const detail=document.createElement('p');detail.className='stage-detail';detail.textContent=stage.detail;body.append(detail);}
-      if (stage.actor) {const actor=document.createElement('p');actor.className='actor';actor.textContent=stage.actor;body.append(actor);}
-      if (stage.agents?.length) {
-        const agents=document.createElement('ul');agents.className='agents';agents.setAttribute('aria-label',strings.agents+' · '+stage.title);
-        stage.agents.forEach(agent => {
-          const item=document.createElement('li');item.className='agent';item.dataset.status=agent.status;
-          const top=document.createElement('div');top.className='agent-top';
-          const name=document.createElement('p');name.className='agent-name';name.textContent=agent.actor;
-          const status=document.createElement('span');status.className='agent-status';status.textContent=labels[agent.status];
-          top.append(name,status);item.append(top);
-          if (agent.detail) {const detail=document.createElement('p');detail.className='agent-detail';detail.textContent=agent.detail;item.append(detail);}
-          agents.append(item);
-        });
-        body.append(agents);
-      }
-      row.append(mark,body);list.append(row);
+    const rows=s.stages.map((stage,index) => {
+      if (!stageViews.has(stage.id)) stageViews.set(stage.id,stageView());
+      const view=stageViews.get(stage.id);view.row.dataset.id=stage.id;view.row.dataset.status=stage.status;
+      text(view.mark,stage.status === 'completed' ? '✓' : stage.status === 'blocked' ? '!' : String(index + 1));
+      text(view.title,stage.title);text(view.status,labels[stage.status]);text(view.detail,stage.detail);text(view.actor,stage.actor);
+      view.agents.setAttribute('aria-label',strings.agents+' · '+stage.title);
+      const agentRows=(stage.agents ?? []).map(agent => {
+        if (!view.agentViews.has(agent.id)) view.agentViews.set(agent.id,agentView());
+        const item=view.agentViews.get(agent.id);item.row.dataset.id=agent.id;item.row.dataset.status=agent.status;
+        text(item.name,agent.actor);text(item.status,labels[agent.status]);text(item.detail,agent.detail ?? '');
+        syncRows(item.row,[item.top,...(agent.detail ? [item.detail] : [])]);return item.row;
+      });
+      syncRows(view.agents,agentRows);
+      for (const [id,item] of view.agentViews) if (!agentRows.includes(item.row)) view.agentViews.delete(id);
+      syncRows(view.body,[view.top,...(stage.detail ? [view.detail] : []),...(stage.actor ? [view.actor] : []),...(agentRows.length ? [view.agents] : [])]);
+      return view.row;
     });
-    $('stages').replaceChildren(list);
+    syncRows($('stages'),rows);
+    for (const [id,view] of stageViews) if (!rows.includes(view.row)) stageViews.delete(id);
+    $('plan-change').hidden=!s.plan;
+    const planNotice=s.plan ? strings.planUpdated+(s.plan.summary ? ' · '+s.plan.summary : '') : '';
+    text($('plan-change'),planNotice);
+    if (s.plan && s.plan.revision !== announcedPlanRevision) {
+      // A new log entry announces even identical consecutive summaries. Keep
+      // only two entries; removals are excluded from this live region's events.
+      const announcement=element('p');announcement.textContent=planNotice;
+      $('plan-announcements').append(announcement);
+      while ($('plan-announcements').children.length > 2) $('plan-announcements').children[0].remove();
+      announcedPlanRevision=s.plan.revision;
+    }
     $('actor').textContent = s.actor || strings.actorMissing;
     $('footer').hidden = false;
   }
@@ -287,7 +324,7 @@ ol{margin:0;padding:0;list-style:none}#stages>li{display:grid;grid-template-colu
     $('empty').hidden=true;
     return;
   }
-  request('ui/initialize',{appInfo:{name:'codex-progress-panel',version:'0.1.2'},appCapabilities:{availableDisplayModes:['inline']},protocolVersion:'2026-01-26'})
+  request('ui/initialize',{appInfo:{name:'codex-progress-panel',version:'0.2.0'},appCapabilities:{availableDisplayModes:['inline']},protocolVersion:'2026-01-26'})
     .then(result => {if (!result || typeof result !== 'object') throw new Error(strings.noBridge);connected=true;context(result.hostContext);send({jsonrpc:'2.0',method:'ui/notifications/initialized',params:{}});connection(strings.waiting);$('empty').hidden=true;})
     .catch(() => {connection(strings.unavailable,'error');});
 })();

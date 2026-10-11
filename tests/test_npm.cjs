@@ -66,7 +66,7 @@ function start(command, args, options = {}) {
   client.initialize = async () => {
     const result = await client.request('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'npm-package-test', version: '1' } });
     client.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
-    assert.deepEqual(result.serverInfo, { name: 'codex-progress-panel', version: '0.1.2' });
+    assert.deepEqual(result.serverInfo, { name: 'codex-progress-panel', version: '0.2.0' });
   };
   client.close = async () => { proc.stdin.end(); const result = await deadline(client.exit); assert.deepEqual(result, { code: 0, signal: null }, client.stderr); assert.equal(client.stderr, ''); assert.equal(client.queue.length, 0); };
   return client;
@@ -112,7 +112,7 @@ before(() => {
   npmEnv = npmEnvironment(path.join(area, 'pack-cache'));
   python = execFileSync('python3', ['-B', '-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).trim();
   const result = JSON.parse(execFileSync('npm', ['pack', PACKAGE, '--ignore-scripts', '--pack-destination', area, '--json'], { env: npmEnv, cwd: area, encoding: 'utf8', timeout: 15000 }))[0];
-  assert.equal(result.name, 'codex-progress-panel'); assert.equal(result.version, '0.1.2');
+  assert.equal(result.name, 'codex-progress-panel'); assert.equal(result.version, '0.2.0');
   assert.deepEqual(result.files.map(file => file.path).sort(), EXPECTED);
   assert.ok(result.size < 100000 && result.unpackedSize < 200000, 'unexpected payload growth');
   tarball = path.join(area, result.filename);
@@ -176,6 +176,33 @@ test('real offline npm exec: stdio, resources, update, freeze and durable restar
     assert.deepEqual(treeDigest(roots[0]), packedBefore, 'runtime changed npm cache package bytes');
   }
   assert.equal(fs.readdirSync(path.join(area, 'caller with spaces Кириллица')).length, 0);
+});
+
+test('packed 0.2.0 reconciles the same execution and preserves retirement evidence across restart', async () => {
+  const data=path.join(area,'dynamic plan state');let client=fromNpm(data,'dynamic fresh cache');await client.initialize();
+  const initial={title:'Packed reconciliation',stages:[{id:'done',title:'Confirmed implementation',status:'completed',detail:'Verified evidence'},
+    {id:'active',title:'Active verification',status:'running'},{id:'removed',title:'Removed pending requirement',status:'pending'}]};
+  const created=(await client.call('create_progress',{task_id:'dynamic-execution',...initial})).structuredContent;
+  const catalog=(await client.request('tools/list')).tools;
+  assert.equal(catalog.length,5);assert.ok(catalog.find(tool=>tool.name==='update_progress').inputSchema.properties.plan_change);
+  const opening={task_id:'dynamic-execution',read_token:created.read_token},writing={task_id:'dynamic-execution',write_token:created.write_token};
+  await client.call('open_progress_panel',opening);
+  const changed=(await client.call('update_progress',{...writing,expected_revision:1,title:initial.title,
+    stages:[initial.stages[1],{id:'new-check',title:'New authorized requirement',status:'pending'}],plan_change:{summary:'Updated user requirements'}})).structuredContent.state;
+  assert.equal(changed.task_id,created.state.task_id);assert.equal(changed.stages[0].status,'running');
+  assert.deepEqual(changed.plan.retired_stages.map(entry=>entry.stage),[created.state.stages[0],created.state.stages[2]]);
+  assert.equal(changed.plan.retired_stages[0].stage.detail,'Verified evidence');await client.close();
+  client=fromNpm(data,'dynamic second fresh cache');await client.initialize();
+  assert.deepEqual((await client.call('get_progress',opening)).structuredContent.state,changed);
+  assert.equal((await client.call('update_progress',{...writing,expected_revision:2,...initial})).isError,true);
+  assert.equal((await client.call('update_progress',{...writing,expected_revision:1,patch:{current:'Stale intention'}})).isError,true);
+  const latest=(await client.call('get_progress',opening)).structuredContent.state;
+  const recovered=(await client.call('update_progress',{...writing,expected_revision:latest.revision,patch:{current:'Continue latest authorized work'}})).structuredContent.state;
+  assert.deepEqual(recovered.stages,latest.stages);assert.deepEqual(recovered.plan,latest.plan);
+  const final=(await client.call('finish_progress',{...writing,expected_revision:3,title:recovered.title,current:recovered.current,stages:recovered.stages})).structuredContent.state;
+  assert.deepEqual(final.plan,changed.plan);
+  assert.equal((await client.call('update_progress',{...writing,expected_revision:4,patch:{},plan_change:{summary:'Forbidden change'}})).isError,true);
+  await client.close();
 });
 
 test('real offline packed npm forwards opt-in retention and defaults to preserving full history', async () => {
@@ -295,7 +322,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
     const blocked = fakePython(`blocked initializing interpreter ${signal}`, `
       require('node:readline').createInterface({input:process.stdin}).on('line', line => {
         const request=JSON.parse(line);
-        if(request.method==='initialize') console.log(JSON.stringify({jsonrpc:'2.0',id:request.id,result:{serverInfo:{name:'codex-progress-panel',version:'0.1.2'}}}));
+        if(request.method==='initialize') console.log(JSON.stringify({jsonrpc:'2.0',id:request.id,result:{serverInfo:{name:'codex-progress-panel',version:'0.2.0'}}}));
       });
       setInterval(()=>{},1000);
     `);
@@ -329,7 +356,7 @@ test('SIGTERM escalates for an owned child that ignores termination', async () =
 
 test('explicit help/version work from packed launcher without Python or state', () => {
   const env = { ...npmEnv, PATH: path.join(area, 'empty PATH') };
-  assert.equal(execFileSync(process.execPath, [launcher, '--version'], { env, encoding: 'utf8' }), '0.1.2\n');
+  assert.equal(execFileSync(process.execPath, [launcher, '--version'], { env, encoding: 'utf8' }), '0.2.0\n');
   const help=execFileSync(process.execPath, [launcher, '--help'], { env, encoding: 'utf8' });
   assert.ok(help.includes('Python 3.9+')); assert.ok(help.includes('--language en|ru')); assert.ok(help.includes('config.json')); assert.ok(help.includes('--auto-cleanup-finalized')); assert.ok(help.includes('Default: off'));
 });

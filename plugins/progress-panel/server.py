@@ -13,13 +13,15 @@ import stat
 import sys
 from datetime import datetime, timezone
 
-VERSION = "0.1.2"
+VERSION = "0.2.0"
 URI = "ui://progress/panel.html"
 MIME = "text/html;profile=mcp-app"
 MAX_LINE = 65536
 MAX_SNAPSHOT_BYTES = 65536
 MAX_TASKS = 128
 STATUSES = ("pending", "running", "blocked", "completed")
+AGENT_STATUSES = (*STATUSES, "cancelled")
+MAX_RETIRED_STAGES = 32
 ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}\Z")
 TOKEN = re.compile(r"[a-f0-9]{64}\Z")
 PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
@@ -111,7 +113,7 @@ def snapshot_fields(value):
             for agent in agents:
                 exact_object(agent, ("id", "actor", "status"), ("detail",))
                 agent_id = safe_id(agent["id"])
-                if agent_id in agents_seen or agent["status"] not in STATUSES:
+                if agent_id in agents_seen or agent["status"] not in AGENT_STATUSES:
                     raise Invalid("Invalid agent identity or status")
                 agents_seen.add(agent_id)
                 result["stages"][-1]["agents"].append({"id": agent_id,
@@ -149,6 +151,101 @@ def serialized_state(state):
     if len(encoded.encode("utf-8")) > MAX_SNAPSHOT_BYTES:
         raise Invalid("Snapshot exceeds 64 KiB; shorten stage or agent summaries")
     return encoded
+
+
+def plan_metadata(value, active_stages):
+    """Validate server-owned history on read, including old retained snapshots."""
+    exact_object(value, ("revision", "changed_at", "summary", "retired_stages"))
+    revision(value["revision"])
+    timestamp_field(value["changed_at"])
+    text_field(value["summary"], 600, empty=True)
+    retired = value["retired_stages"]
+    if not isinstance(retired, list) or len(retired) > MAX_RETIRED_STAGES:
+        raise Invalid("Invalid retired-stage history")
+    seen = {stage["id"] for stage in active_stages}
+    agents_seen = {agent["id"] for stage in active_stages for agent in stage.get("agents", [])}
+    for entry in retired:
+        exact_object(entry, ("stage", "retired_revision", "retired_at"))
+        revision(entry["retired_revision"])
+        if entry["retired_revision"] > value["revision"]:
+            raise Invalid("Invalid retired-stage revision")
+        timestamp_field(entry["retired_at"])
+        stage = entry["stage"]
+        # A retired blocked stage retains its last confirmed data without needing
+        # the current plan's blocker. This wrapper only validates stage fields.
+        normalized = snapshot_fields({"title": "History", "blocker": "Historical blocker", "stages": [stage]})["stages"][0]
+        if normalized != stage:
+            raise Invalid("Invalid retired-stage snapshot")
+        if stage["id"] in seen:
+            raise Invalid("Retired stage ids cannot be reused")
+        seen.add(stage["id"])
+        for agent in stage.get("agents", []):
+            if agent["id"] in agents_seen:
+                raise Invalid("Retired assignment ids cannot be reused")
+            agents_seen.add(agent["id"])
+        if any(agent["status"] not in ("completed", "cancelled") for agent in stage.get("agents", [])):
+            raise Invalid("Retired stages require reconciled agent assignments")
+    return value
+
+
+def timestamp_field(value):
+    text_field(value, 40)
+    try:
+        if datetime.fromisoformat(value.replace("Z", "+00:00")).utcoffset() is None:
+            raise ValueError("Naive timestamp")
+    except (ValueError, OverflowError):
+        raise Invalid("Invalid plan timestamp")
+    return value
+
+
+def reconcile_plan(old, state, change, timestamp):
+    """Derive metadata from authenticated state inside the existing write CAS."""
+    before = {stage["id"]: stage for stage in old["stages"]}
+    after = {stage["id"]: stage for stage in state["stages"]}
+    changed = (list(before) != list(after) or any(before[ident]["title"] != stage["title"]
+        for ident, stage in after.items() if ident in before) or change is not None)
+    previous = old.get("plan")
+    if previous:
+        retired_ids = {entry["stage"]["id"] for entry in previous["retired_stages"]}
+        retired_agents = {agent["id"] for entry in previous["retired_stages"]
+            for agent in entry["stage"].get("agents", [])}
+        if retired_ids.intersection(after):
+            raise Invalid("Retired stage ids cannot be reused; assign new work a fresh id")
+        if retired_agents.intersection(agent["id"] for stage in state["stages"] for agent in stage.get("agents", [])):
+            raise Invalid("Retired assignment ids cannot be reused; use a fresh assignment id")
+    for ident, stage in before.items():
+        incoming = after.get(ident)
+        if incoming and stage["status"] == "completed" and incoming["status"] != "completed":
+            raise Invalid("Preserve completed stages; add fresh re-verification work")
+        if changed and incoming and stage["status"] == "completed" and stage["detail"] != incoming["detail"]:
+            raise Invalid("Preserve completed stage evidence; add fresh re-verification work")
+        old_agents = {agent["id"]: agent for agent in stage.get("agents", [])}
+        new_agents = {agent["id"]: agent for agent in incoming.get("agents", [])} if incoming else {}
+        for agent_id, agent in old_agents.items():
+            proposed = new_agents.get(agent_id)
+            if proposed and agent["status"] == "completed" and proposed["status"] != "completed":
+                raise Invalid("Preserve completed assignments; use a fresh assignment id")
+            if changed and agent["status"] not in ("completed", "cancelled"):
+                if not proposed or proposed["actor"] != agent["actor"]:
+                    raise Invalid("Reconcile affected agents in a patch first; confirm completion or cancellation before removing their work")
+            if changed and incoming and agent["status"] in ("completed", "cancelled") and not proposed:
+                raise Invalid("Preserve confirmed agent summaries in retained stages")
+            if changed and proposed and agent["status"] in ("completed", "cancelled") and proposed != agent:
+                raise Invalid("Preserve confirmed agent summaries; use a fresh assignment id")
+    if not changed:
+        if previous:
+            state["plan"] = previous
+        return
+    number = previous["revision"] + 1 if previous else 1
+    revision(number)
+    retired = list(previous["retired_stages"]) if previous else []
+    retired.extend({"stage": stage, "retired_revision": number, "retired_at": timestamp}
+        for ident, stage in before.items() if ident not in after)
+    if len(retired) > MAX_RETIRED_STAGES:
+        raise Invalid("Plan history reached 32 retired stages; retain this history and keep the current plan or combine new pending work")
+    state["plan"] = {"revision": number, "changed_at": timestamp,
+        "summary": change["summary"] if change else "", "retired_stages": retired}
+    plan_metadata(state["plan"], state["stages"])
 
 
 def digest(value):
@@ -216,7 +313,7 @@ class Store:
     def stored_state(self, task_id, stored_revision, encoded):
         """Validate retained state for both authenticated reads and retention."""
         state = json.loads(encoded, object_pairs_hook=unique_pairs, parse_constant=invalid_constant)
-        exact_object(state, ("task_id", "revision", "updated_at", "title", "stages", "actor", "current", "blocker"), ("finalized", "finalized_at"))
+        exact_object(state, ("task_id", "revision", "updated_at", "title", "stages", "actor", "current", "blocker"), ("finalized", "finalized_at", "plan"))
         # Legacy snapshots remain readable without mutating their stored bytes.
         state.setdefault("finalized", False)
         state.setdefault("finalized_at", None)
@@ -228,6 +325,10 @@ class Store:
                 raise Invalid("Stored finalization is invalid")
             self.finalized_time(state)
         snapshot_fields({k: state[k] for k in ("title", "stages", "actor", "current", "blocker")})
+        if "plan" in state:
+            plan_metadata(state["plan"], state["stages"])
+            if state["plan"]["revision"] > stored_revision:
+                raise Invalid("Invalid stored plan revision")
         safe_id(task_id)
         if state["task_id"] != task_id or state["revision"] != stored_revision:
             raise Invalid("Stored state is invalid")
@@ -289,10 +390,15 @@ class Store:
 
     def replace(self, args, finalize):
         patch_mode = isinstance(args, dict) and "patch" in args and not finalize
+        optional = () if finalize else ("plan_change",)
         if patch_mode:
-            exact_object(args, ("task_id", "write_token", "expected_revision", "patch"))
+            exact_object(args, ("task_id", "write_token", "expected_revision", "patch"), optional)
         else:
-            exact_object(args, ("task_id", "write_token", "expected_revision", "title", "stages"), ("actor", "current", "blocker"))
+            exact_object(args, ("task_id", "write_token", "expected_revision", "title", "stages"), ("actor", "current", "blocker", *optional))
+        change = args.get("plan_change")
+        if "plan_change" in args:
+            exact_object(change, ("summary",))
+            text_field(change["summary"], 600)
         expected = revision(args["expected_revision"])
         self.db.execute("BEGIN IMMEDIATE")
         try:
@@ -302,8 +408,9 @@ class Store:
             if old["revision"] != expected:
                 raise Invalid("Stale revision; read the authenticated task with get_progress before retrying")
             state = merge_patch(old, args["patch"]) if patch_mode else snapshot_fields(
-                {k: v for k, v in args.items() if k not in ("task_id", "write_token", "expected_revision")})
+                {k: v for k, v in args.items() if k not in ("task_id", "write_token", "expected_revision", "plan_change")})
             timestamp = datetime.now(timezone.utc).isoformat()
+            reconcile_plan(old, state, change, timestamp)
             state.update(task_id=args["task_id"], revision=expected + 1, updated_at=timestamp,
                 finalized=finalize, finalized_at=timestamp if finalize else None)
             revision(state["revision"])
@@ -324,7 +431,7 @@ ID_SCHEMA = {"type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$", "m
 TOKEN_SCHEMA = {"type": "string", "pattern": "^[a-f0-9]{64}$", "maxLength": 64}
 TEXT_SCHEMA = {"type": "string", "maxLength": 600}
 AGENT_SCHEMA = schema({"id": ID_SCHEMA, "actor": {"type": "string", "minLength": 1, "maxLength": 160},
-    "status": {"type": "string", "enum": list(STATUSES)}, "detail": TEXT_SCHEMA}, ("id", "actor", "status"))
+    "status": {"type": "string", "enum": list(AGENT_STATUSES)}, "detail": TEXT_SCHEMA}, ("id", "actor", "status"))
 AGENTS_SCHEMA = {"type": "array", "maxItems": 8, "items": AGENT_SCHEMA}
 FIELDS = {"title": {"type": "string", "minLength": 1, "maxLength": 240}, "actor": TEXT_SCHEMA,
     "current": TEXT_SCHEMA, "blocker": TEXT_SCHEMA,
@@ -338,7 +445,8 @@ PATCH_FIELDS = {**FIELDS, "stages": {"type": "array", "maxItems": 32,
     "items": schema(FIELDS["stages"]["items"]["properties"], ("id",))}}
 WRITE_FIELDS = {"task_id": ID_SCHEMA, "write_token": TOKEN_SCHEMA,
     "expected_revision": {"type": "integer", "minimum": 1, "maximum": 2**53-2}}
-UPDATE_INPUT = schema({**WRITE_FIELDS, **FIELDS, "patch": schema(PATCH_FIELDS)},
+PLAN_CHANGE = schema({"summary": {"type": "string", "minLength": 1, "maxLength": 600}}, ("summary",))
+UPDATE_INPUT = schema({**WRITE_FIELDS, **FIELDS, "patch": schema(PATCH_FIELDS), "plan_change": PLAN_CHANGE},
     ("task_id", "write_token", "expected_revision"))
 UPDATE_INPUT["oneOf"] = [
     {"required": ["title", "stages"], "not": {"required": ["patch"]}},
@@ -349,7 +457,15 @@ AGENT_OUTPUT = {**AGENT_SCHEMA, "required": ["id", "actor", "status", "detail"]}
 STAGE_OUTPUT = {**FIELDS["stages"]["items"], "properties": {
     **FIELDS["stages"]["items"]["properties"], "agents": {**AGENTS_SCHEMA, "items": AGENT_OUTPUT}},
     "required": ["id", "title", "status", "actor", "detail"]}
+PLAN_OUTPUT = schema({"revision": {"type": "integer", "minimum": 1, "maximum": 2**53-1},
+    "changed_at": {"type": "string", "minLength": 1, "maxLength": 40, "format": "date-time"},
+    "summary": TEXT_SCHEMA, "retired_stages": {"type": "array", "maxItems": MAX_RETIRED_STAGES,
+        "items": schema({"stage": STAGE_OUTPUT,
+            "retired_revision": {"type": "integer", "minimum": 1, "maximum": 2**53-1},
+            "retired_at": {"type": "string", "minLength": 1, "maxLength": 40, "format": "date-time"}},
+            ("stage", "retired_revision", "retired_at"))}}, ("revision", "changed_at", "summary", "retired_stages"))
 STATE_OUTPUT = schema({**FIELDS, "stages": {**FIELDS["stages"], "items": STAGE_OUTPUT},
+    "plan": PLAN_OUTPUT,
     "task_id": ID_SCHEMA, "revision": {"type": "integer", "minimum": 1, "maximum": 2**53-1},
     "updated_at": {"type": "string", "minLength": 1, "maxLength": 40, "format": "date-time"},
     "finalized": {"type": "boolean"},
@@ -372,7 +488,7 @@ TOOLS = [
     tool("open_progress_panel", "Open one authenticated task's read-only progress panel. Empty arguments show an unbound empty panel. Requires create_progress first to bind a task.",
         schema({"task_id": ID_SCHEMA, "read_token": TOKEN_SCHEMA}), OPEN_RESULT, True,
         {"ui": {"resourceUri": URI, "visibility": ["model"]}}),
-    tool("update_progress", "Atomically replace a complete snapshot or merge patch fields with compare-and-swap revision. Patch names existing stages and preserves omitted fields. Never mix modes. Completed agents do not complete their stage.",
+    tool("update_progress", "Atomically replace a complete snapshot or merge patch fields with compare-and-swap revision. Optional plan_change.summary describes authorized scope changes; server-owned history retires removed stages. Reconcile affected active agents first. Patch names existing stages; never mix modes. Completed agents do not complete their stage.",
         UPDATE_INPUT, STATE_RESULT, False, {"ui": {"visibility": ["model"]}}),
     tool("finish_progress", "Freeze the final snapshot of this assistant execution. Irrevocable; blocked or pending stages may remain. Requires the write capability and current revision.",
         schema({"task_id": ID_SCHEMA, "write_token": TOKEN_SCHEMA,
