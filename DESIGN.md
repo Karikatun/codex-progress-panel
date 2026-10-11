@@ -6,6 +6,10 @@ Show observation separately from stage status. Unfinished snapshots become stale
 
 Use polite status announcements for material connection and freshness changes, not each age tick. Keep ordered stages and nested agent lists readable without color. No progress percentage, time estimate or decorative animation. Wrap long text at narrow widths. All supplied task content renders as text. Use system fonts and no remote assets. Native host theme, geometry and screen-reader behavior require separate acceptance checks.
 
+## Plan changes
+
+Keep task and widget identity through authorized scope changes. Reuse keyed stage and agent rows for unchanged ids; reorder existing rows without rebuilding the list. Show only current required stages and a subdued localized “Plan updated” summary above them. Retired-stage evidence stays in the bounded authenticated snapshot. Rename/refinement preserves verified progress; substantial replacement uses fresh stage/assignment ids and confirmed delegation reconciliation. Never infer completion or cancellation from the UI. Finalization keeps the last plan history immutable.
+
 ## Storage retention
 
 Keep the 128-row limit. Automatic cleanup is off by default, including the shipped plugin manifest. `--auto-cleanup-finalized` is an explicit same-user operator choice for the exact private data directory. It does not grant task capabilities, list history, or authorize subagent writes. Only `create_progress` at exactly 128 rows can delete one oldest confirmed finalized execution, ordered by timezone-aware `finalized_at` in UTC then id. Incoming validation and duplicate-id rejection precede cleanup. Stored-state validation, selection, one deletion and insertion share the existing `BEGIN IMMEDIATE` transaction; failure rolls back both changes. More than 128 rows fails closed. Unfinished, stale, all-completed but unfinalized, and legacy rows are never eligible. Startup, read, update and finish do not clean up.

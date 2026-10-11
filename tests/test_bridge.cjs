@@ -4,13 +4,18 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const os = require('node:os');
+const {spawn} = require('node:child_process');
+const readline = require('node:readline');
 const html = fs.readFileSync(path.join(__dirname,'../plugins/progress-panel/panel.html'),'utf8');
 const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 class Element {
   constructor(tag) {this.tag=tag;this.children=[];this.dataset={};this.attrs={};this.hidden=false;this._text='';this.textWrites=0;this.style={setProperty:(k,v)=>{this.attrs[k]=v;}};}
   get textContent() {return this._text + this.children.map(x=>x.textContent).join('');}
   set textContent(v) {this._text=String(v);this.children=[];this.textWrites++;}
-  append(...nodes) {for (const node of nodes) this.children.push(...(node.tag==='fragment'?node.children:[node]));}
+  append(...nodes) {for (const node of nodes) for (const child of node.tag==='fragment'?[...node.children]:[node]) this.insertBefore(child,null);}
+  insertBefore(node,before) {node.remove();const index=before===null?this.children.length:this.children.indexOf(before);assert.ok(index>=0);this.children.splice(index,0,node);node.parentNode=this;}
+  remove() {if(this.parentNode){const index=this.parentNode.children.indexOf(this);this.parentNode.children.splice(index,1);this.parentNode=null;}}
   replaceChildren(...nodes) {this.children=[];this._text='';this.append(...nodes);}
   setAttribute(key,value) {this.attrs[key]=value;}
 }
@@ -50,6 +55,25 @@ async function connect(f) {
   await settle();
   assert.equal(f.messages[1].message.method,'ui/notifications/initialized');
   assert.equal(f.doc.documentElement.dataset.theme,'dark');
+}
+async function realMcp(body) {
+  const area=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'plan-bridge-')));
+  const process=spawn('python3',['-B',path.join(__dirname,'../plugins/progress-panel/server.py'),'--data-dir',path.join(area,'state')],{stdio:['pipe','pipe','pipe']});
+  const lines=readline.createInterface({input:process.stdout}),queue=[],waiting=[];let seq=0,stderr='';
+  process.stderr.on('data',data=>{stderr+=data;});
+  lines.on('line',line=>{const accept=waiting.shift();if(accept) accept(line);else queue.push(line);});
+  const exit=new Promise((resolve,reject)=>{process.on('error',reject);process.on('close',code=>resolve(code));});
+  async function request(method,params={}) {
+    const id=++seq;process.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');
+    const reply=await new Promise((resolve,reject)=>{const timeout=setTimeout(()=>reject(new Error('Real MCP deadline '+stderr)),4000);
+      const accept=line=>{clearTimeout(timeout);resolve(JSON.parse(line));};if(queue.length) accept(queue.shift());else waiting.push(accept);});
+    assert.equal(reply.id,id);assert.equal(reply.error,undefined);return reply.result;
+  }
+  try {
+    await request('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'bridge-contract',version:'1'}});
+    process.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
+    await body((name,args)=>request('tools/call',{name,arguments:args}));
+  } finally {process.stdin.end();assert.equal(await exit,0,stderr);lines.close();fs.rmSync(area,{recursive:true,force:true});}
 }
 async function tests() {
   let count=0;
@@ -448,6 +472,89 @@ async function tests() {
     assert.ok([...f.timers.values()].every(x=>x.ms<=120000));
     assert.equal(/<(button|input|select|textarea)\b/.test(html),false); // Read-only content has no keyboard-only operation.
   });
-  console.log('Bridge mock: '+count+' tests passed. Native host rendering NOT VERIFIED.');
+  await check('real MCP plan reconciliation preserves keyed UI identity, history and four assignments',async()=>{
+    for(const language of ['en','ru']) await realMcp(async call=>{
+      const fields={title:'Active execution',actor:'Root',current:'Work continues',blocker:'',stages:[
+        {id:'done',title:'Confirmed work',status:'completed',detail:'Historical proof'},
+        {id:'work',title:'Current work',status:'running',agents:Array.from({length:4},(_,i)=>({id:'assignment-'+i,actor:'Worker '+i,status:'running',detail:'Actual assignment'}))},
+        {id:'pending',title:'No longer needed',status:'pending'}]};
+      const created=(await call('create_progress',{task_id:'same-execution',...fields})).structuredContent;
+      const writing={task_id:'same-execution',write_token:created.write_token};
+        const f=fixture(false,language);await connect(f);
+        const opened=await call('open_progress_panel',{task_id:'same-execution',read_token:created.read_token});
+        f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:opened});
+        const workRow=f.ids.stages.children.find(row=>row.dataset.id==='work');
+        const agentRows=[...workRow.children[1].children.at(-1).children];
+        const latest=opened.structuredContent.state;
+        const changed=await call('update_progress',{...writing,expected_revision:latest.revision,...fields,
+          stages:[fields.stages[1],{id:'added-'+language,title:'New authorized work',status:'pending'}],plan_change:{summary:'Changed scope <img onerror=bad()>'}});
+        assert.equal(changed.isError,undefined);
+        f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:changed});
+        assert.equal(f.ids.stages.children.length,2);assert.equal(f.ids.stages.children[0],workRow);
+        assert.deepEqual(workRow.children[1].children.at(-1).children,agentRows);
+        assert.equal(f.ids.stages.textContent.includes('Historical proof'),false);
+        assert.equal(f.ids.stages.textContent.includes('No longer needed'),false);
+        assert.equal(f.ids['plan-change'].hidden,false);
+        assert.equal(f.ids['plan-change'].textContent,(language==='ru'?'План обновлён':'Plan updated')+' · Changed scope <img onerror=bad()>');
+        const current=changed.structuredContent.state;
+        const renamed=await call('update_progress',{...writing,expected_revision:current.revision,patch:{stages:[{id:'work',title:'Renamed unchanged work'}]}});
+        f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:renamed});
+        assert.equal(f.ids.stages.children[0],workRow);assert.equal(workRow.dataset.status,'running');
+    });
+  });
+  await check('retired audit and malformed plan metadata never enter or replace active UI',async()=>{
+    const plan={revision:1,changed_at:sample().updated_at,summary:'Changed scope',retired_stages:[{stage:{id:'old',title:'Old work',status:'completed',actor:'Root',detail:'Confirmed evidence'},retired_revision:1,retired_at:sample().updated_at}]};
+    for(const mutate of [s=>{s.plan=null;},s=>{s.plan.extra=true;},s=>{s.plan.summary='x'.repeat(601);},
+      s=>{s.plan.retired_stages.push(s.plan.retired_stages[0]);},s=>{s.plan.retired_stages[0].stage.id='build';},
+      s=>{s.plan.retired_stages=Array.from({length:33},(_,i)=>({...s.plan.retired_stages[0],stage:{...s.plan.retired_stages[0].stage,id:'retired-'+i}}));},
+      s=>{s.plan.revision=4;},s=>{s.plan.retired_stages[0].retired_revision=2;},s=>{s.plan.retired_stages[0].stage.agents=[{id:'a',actor:'Worker',status:'running'}];},
+      s=>{s.stages[0].status='cancelled';}]) {
+      const f=fixture();await connect(f);const valid=sample(2);valid.plan=structuredClone(plan);
+      f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(valid)});
+      const row=f.ids.stages.children[0],notice=f.ids['plan-change'].textContent;
+      const invalid=sample(3);invalid.plan=structuredClone(plan);mutate(invalid);
+      f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(invalid)});
+      assert.equal(f.ids.main.dataset.observation,'unavailable');assert.equal(f.ids.stages.children[0],row);
+      assert.equal(f.ids['plan-change'].textContent,notice);assert.equal(f.ids.stages.textContent.includes('Confirmed evidence'),false);
+    }
+    const f=fixture(false,'ru');await connect(f);const cancelled=sample();cancelled.stages[0].agents=[{id:'a',actor:'Worker',status:'cancelled',detail:'Cancellation confirmed'}];
+    f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(cancelled)});
+    assert.ok(f.ids.stages.textContent.includes('Отменён'));assert.equal(f.ids.stages.children[0].dataset.status,'running');
+  });
+  await check('each plan revision adds one localized accessibility event without repeated progress announcements',async()=>{
+    for (const language of ['en','ru']) {
+      const f=fixture(false,language);await connect(f);
+      const initial=sample(2);initial.plan={revision:1,changed_at:initial.updated_at,summary:'',retired_stages:[]};
+      f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(initial)});
+      const log=f.ids['plan-announcements'],label=language==='ru'?'План обновлён':'Plan updated';
+      assert.equal(log.attrs.role,'log');assert.equal(log.attrs['aria-live'],'polite');assert.equal(log.attrs['aria-relevant'],'additions');
+      assert.equal(log.attrs['aria-atomic'],'false');assert.equal(log.attrs['aria-label'],language==='ru'?'Изменения плана':'Plan changes');
+      assert.equal(log.children.length,1);const first=log.children[0];assert.equal(first.textContent,label);
+      const build=f.ids.stages.children[0],test=f.ids.stages.children[1];
+      const reordered=structuredClone(initial);reordered.revision=3;reordered.plan.revision=2;reordered.stages.reverse();
+      f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(reordered)});
+      assert.equal(log.children.length,2);const second=log.children[1];assert.notEqual(second,first);assert.equal(second.textContent,label);
+      assert.deepEqual(f.ids.stages.children,[test,build]);
+      const visibleWrites=f.ids['plan-change'].textWrites;
+      f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(reordered)});
+      assert.deepEqual(log.children,[first,second]);
+      const progress=structuredClone(reordered);progress.revision=4;progress.current='Continue current work';progress.stages[0].detail='Verified unaffected result';
+      f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(progress)});
+      assert.deepEqual(log.children,[first,second]);assert.equal(f.ids['plan-change'].textWrites,visibleWrites);
+      const refined=structuredClone(progress);refined.revision=5;refined.plan.revision=3;refined.plan.summary='<img onerror=bad()> 新しい要件';
+      f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(refined)});
+      assert.equal(log.children.length,2);assert.equal(log.children[0],second);const third=log.children[1];
+      assert.notEqual(third,second);assert.equal(third.textContent,label+' · '+refined.plan.summary);assert.equal(third.children.length,0);
+      assert.equal(f.ids['plan-change'].textContent,third.textContent);assert.deepEqual(f.ids.stages.children,[test,build]);
+      const foreign=structuredClone(refined);foreign.task_id='foreign-execution';foreign.revision=6;foreign.plan.revision=4;
+      f.emit({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:result(foreign)});
+      assert.deepEqual(log.children,[second,third]);
+      f.run(2500);const poll=f.messages.at(-1).message;
+      assert.equal(poll.params.name,'get_progress');assert.equal(poll.params.arguments.task_id,initial.task_id);
+      f.emit({jsonrpc:'2.0',id:poll.id,result:result(refined,false)});await settle();
+      assert.deepEqual(log.children,[second,third]);assert.deepEqual(f.ids.stages.children,[test,build]);
+    }
+  });
+  console.log('Bridge + real MCP: '+count+' tests passed. Native host rendering NOT VERIFIED.');
 }
 tests().catch(error=>{console.error(error);process.exitCode=1;});

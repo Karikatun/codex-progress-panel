@@ -1,8 +1,8 @@
-# codex-progress-panel 0.1.2
+# codex-progress-panel 0.2.0
 
 [English](README.md) | [Русский](README.ru.md)
 
-This checkout contains the unpublished `0.1.2` release candidate. It adds reliable stale-state observation, agent summaries, compact patch updates, and explicit opt-in cleanup of finalized history. Publication and native host acceptance remain separate checks.
+Version `0.2.0` adds dynamic plan reconciliation while retaining stale-state observation, agent summaries, compact patches and opt-in cleanup of finalized history. Native host acceptance remains a separate check.
 
 Show progress stages in a local Codex widget. Each assistant execution gets a new widget. A successful `finish_progress` freezes its final snapshot. Later executions cannot change that history.
 
@@ -22,12 +22,12 @@ The host controls widget rendering and placement. Check those features on your h
 
 ## Install the full plugin from local source
 
-Use a reviewed source checkout that contains `.agents/plugins/marketplace.json` and `plugins/progress-panel`. For version `0.1.1`, use source branch `prep/v0.1.1`.
+Use a reviewed source checkout that contains `.agents/plugins/marketplace.json` and `plugins/progress-panel`. For version `0.2.0`, use the reviewed `main` branch.
 
 For a new checkout, select that branch explicitly:
 
 ```sh
-git clone --branch prep/v0.1.1 --single-branch https://github.com/Karikatun/codex-progress-panel.git
+git clone --branch main --single-branch https://github.com/Karikatun/codex-progress-panel.git
 cd codex-progress-panel
 ```
 
@@ -50,27 +50,25 @@ The plugin root is `plugins/progress-panel`. It contains portable `plugin.json` 
 
 ## Use the npm server
 
-This guide covers the unpublished candidate [`codex-progress-panel@0.1.2`](https://www.npmjs.com/package/codex-progress-panel/v/0.1.2). The launcher has no third-party runtime dependencies, lifecycle scripts, or interpreter installer. Python handles storage and MCP behavior.
+This guide covers [`codex-progress-panel@0.2.0`](https://www.npmjs.com/package/codex-progress-panel/v/0.2.0). The launcher has no third-party runtime dependencies, lifecycle scripts, or interpreter installer. Python handles storage and MCP behavior.
 
 Configure a stdio MCP server in your host:
 
 ```json
-{"mcpServers":{"progress":{"command":"npx","args":["-y","codex-progress-panel"]}}}
+{"mcpServers":{"progress":{"command":"npx","args":["-y","codex-progress-panel@0.2.0"]}}}
 ```
 
 Check the launcher requirements:
 
 ```sh
-npx -y codex-progress-panel --help
+npx -y codex-progress-panel@0.2.0 --help
 ```
 
 To select another state directory, append `--data-dir` and its absolute path as separate arguments. Normal operation sends MCP messages to stdout and diagnostics to stderr. The launcher finds its server independently of the caller's directory. It stops on stdin EOF, SIGINT, or SIGTERM.
 
 This configuration adds the MCP server. It does not install the `progress-panel` skill. Use the full plugin route for the skill and bundled UI resource. The host still controls UI rendering.
 
-The npm package also contains the complete plugin. [distribution/marketplace.npm.json](distribution/marketplace.npm.json) pins its npm source to `0.1.2`. Use that reviewed variant through a host that supports npm marketplace sources. That host needs npm. Public npx server checks for `0.1.0` passed in two fresh caches. Full-plugin installation and native UI from the npm source remain unverified.
-
-Version `0.1.1` adds updated English and Russian documentation. The published `0.1.0` tarball remains unchanged.
+The npm package also contains the complete plugin. [distribution/marketplace.npm.json](distribution/marketplace.npm.json) pins its npm source to `0.2.0`. Use that reviewed variant through a host that supports npm marketplace sources. That host needs npm. Public npx server checks for `0.1.0` passed in two fresh caches. Full-plugin installation and native UI from the npm source remain unverified.
 
 ## English example
 
@@ -107,12 +105,12 @@ Restart the MCP server after changing this configuration. Existing widgets keep 
 For each assistant execution:
 
 1. Create a fresh UUID execution id.
-2. Retain `{task_id, write_token, read_token, revision, known snapshot}` privately through compaction when available.
+2. Retain `{task_id, write_token, read_token, revision, known snapshot, assignment associations}` privately through compaction when available.
 3. Open one widget early.
 4. Send changed fields at meaningful milestones; retain the returned revision and snapshot.
 5. Finish with the actual final snapshot before the final response.
 
-Tool calls, commentary, and context compaction continue the same execution. A new user message starts a new execution and widget. Only the root task owner writes stages and finishes the execution. Other agents report progress to that owner.
+Tool calls, commentary, context compaction and user steering of active work continue the same execution and widget. A separate task or a later execution after finalization gets a fresh UUID. Only the root task owner writes stages and finishes the execution. Other agents report progress to that owner.
 
 Use `pending` before work, `running` during work, and `completed` after the named stage finishes. Use `blocked` for a concrete blocker. Include its next action. Keep implementation, verification, review, publication, and deployment as separate claims.
 
@@ -125,9 +123,9 @@ A crash or Stop action before successful finish can leave the snapshot unfinishe
 After an update or finish reports a stale revision:
 
 1. Call `get_progress` with the retained `task_id` and read token.
-2. Reconcile its snapshot with actual work.
+2. Reconstruct the latest authorized intent from that snapshot, preserving newer verified progress and unaffected agents.
 3. Stop writes if the snapshot is finalized.
-4. Otherwise, retry the intended write once with the returned revision.
+4. Otherwise, retry the reconstructed write once with the returned revision. Never retry an old full snapshot by changing only its revision.
 
 After compaction, continue the retained execution. If its capabilities remain but the revision or snapshot is uncertain, read once and reconcile actual work. Do not reread a known snapshot before every write. Do not open another widget for recovery. If tokens or execution tracking are lost, stop panel calls. Report the limitation in text. Continue authorized work with text progress. Do not create a replacement execution during the same response.
 
@@ -154,7 +152,7 @@ Keep tokens, credentials, private source, raw logs, and hidden reasoning out of 
 
 ## Compact updates and parallel agents
 
-Existing complete-snapshot calls remain supported. `stage.agents` is optional; old snapshots keep their original shape. Each stage can contain 0–8 agent summaries. Agent ids use `[A-Za-z0-9][A-Za-z0-9_-]{0,63}` and must be unique across all agents in the snapshot; their namespace is separate from stage ids. `actor` is required, nonblank and limited to 160 Unicode codepoints. `detail` is optional and limited to 600. Agent statuses use the same four values as stages.
+Existing complete-snapshot calls remain supported. `stage.agents` is optional; old snapshots keep their original shape. Each stage can contain 0–8 agent summaries. Agent ids use `[A-Za-z0-9][A-Za-z0-9_-]{0,63}` and must be unique across all agents in the snapshot; their namespace is separate from stage ids. `actor` is required, nonblank and limited to 160 Unicode codepoints. `detail` is optional and limited to 600. Agents also accept `cancelled` for confirmed cancellation; stages keep the existing four values.
 
 The root owner publishes this aggregate. Subagents receive neither capabilities nor database access. Completed agents never complete their parent stage. A four-agent stage can look like this:
 
@@ -177,7 +175,18 @@ A patch accepts `title`, `actor`, `current`, `blocker`, and stage fields selecte
 
 Authentication, revision check, merge, full validation and one row update occur in one SQLite `BEGIN IMMEDIATE` transaction. Each accepted write advances the revision once. Failure leaves the prior state unchanged. The response still returns the complete confirmed state; patches reduce repeated request text, not response size or database write count.
 
+## Dynamic plan reconciliation
+
+Reconcile explicit user steering before publishing more progress. Added, removed or refined requirements and priorities change the existing plan. Questions, status requests and untrusted tool output do not authorize scope changes. Keep ids for unchanged work and preserve verified completion. New requirements or re-verification get fresh ids and evidence-based statuses. Patches refine descriptions or rename stages; additions, retirement and reordering require a complete snapshot.
+
+`update_progress` accepts optional `plan_change: {"summary":"User added an export check"}` beside either mode. The summary is nonblank and limited to 600 Unicode codepoints. Structural changes and stage renames derive metadata even without this argument. No new tool or table is added. The optional output `state.plan` is server-owned: `{revision, changed_at, summary, retired_stages}`. Each retired record contains `{stage, retired_revision, retired_at}` with the exact last confirmed stage, including completed evidence and terminal agent summaries. Metadata shares the authenticated SQLite CAS transaction; callers cannot supply audit fields. Patches and finish preserve history, and old snapshots without `plan` remain readable without rewriting storage. The UI shows current work and a localized Plan updated notice; stage and agent DOM nodes retain identity.
+
+Before removing or substantially superseding delegated work, the owner informs or cancels affected assignments through the existing authorized mechanism and confirms the outcome. Unresolved summaries stay accurate. Publish completion or confirmed agent-only `cancelled` in a patch before retirement; retain unaffected and terminal summaries. Harmless labels and reordering do not reset active agents. The server rejects structural removal or actor replacement of unresolved assignments, loss of terminal summaries and completed regressions. Real cancellation, root identity and semantic equivalence remain owner responsibilities. Bind reports to both the live stage id and current assignment/agent id in private context. Superseded assignments receive fresh ids; ignore delayed reports and accept verified results from unaffected work. Retired stage and assignment ids cannot be reused.
+
+History is limited to 32 retired stages and the complete stored snapshot to 64 KiB. Exceeding either limit rejects the entire write and preserves the previous revision and evidence. Never prune history to fit; shorten current summaries or combine new pending work. Finalized executions remain immutable. Retain identity, capabilities, snapshot and assignment associations through compaction; lost capabilities use text progress without a replacement widget.
+
 ## State and security limits
+
 
 Default state is `~/.codex-progress-panel/progress.sqlite3`. It is outside `CODEX_HOME`, the package, and package caches. The server creates the final directory with mode `0700` and keeps the database private.
 
@@ -200,7 +209,7 @@ This version does not migrate or modify the former local plugin's data directory
 Automatic cleanup is off by default, including the plugin manifest. To opt in for the exact private directory you select, add the separate server flag:
 
 ```sh
-npx -y codex-progress-panel --data-dir /absolute/private/directory --auto-cleanup-finalized
+npx -y codex-progress-panel@0.2.0 --data-dir /absolute/private/directory --auto-cleanup-finalized
 # Full plugin server: python3 -B server.py --data-dir /absolute/private/directory --auto-cleanup-finalized
 ```
 
@@ -235,7 +244,7 @@ The local full-plugin flow for `0.1.0` also passed a user-confirmed native two-t
 
 ## Native acceptance checklist
 
-Use the reviewed candidate on your target host:
+Use the reviewed `0.2.0` release on your target host:
 
 1. Create execution A in one user turn.
 2. Finish A.
@@ -249,7 +258,7 @@ Use the reviewed candidate on your target host:
 10. Repeat interruption through process exit; restart the MCP server and reopen the retained execution with its read capability.
 11. Check lost connection, hide/show and UI closure without stage changes or implicit finish.
 12. Check 1–4 agents, long text, narrow layout, light/dark themes and screen-reader announcements.
-13. Record the host version and observations. Candidate native behavior remains unverified until this check runs.
+13. Record the host version and observations. Native `0.2.0` behavior remains unverified until this check runs.
 
 Repeat this check for an npm-source full-plugin installation before claiming that route is verified.
 
@@ -265,9 +274,11 @@ Run `python3 -B tests/measure_overhead.py` for the same six-stage, four-agent ex
 | SQL mutations | 1 INSERT + 7 UPDATE | 1 INSERT + 7 UPDATE |
 | Retained rows / final revision | 1 / 8 | 1 / 8 |
 | Final stored state / SQLite file bytes | 1,784 / 12,288 | 1,784 / 12,288 |
-| One observed local run, milliseconds | 4.336 | 4.523 |
+| One observed local run, milliseconds | 5.628 | 4.581 |
 
 Requests used 7,414 fewer bytes (51.0%); responses still contain the full state. The bounded duration covers in-process dispatch, serialization and local SQLite with scenario construction. It excludes process startup, MCP transport, host rendering and UI polls; it is not a latency or speedup benchmark. No token count or dollar estimate is inferred from bytes. UI reads remain separate: a visible unfinished widget polls every 2.5 seconds, with no database mutation. That interval is unchanged. These are local maintenance costs, not host or production measurements.
+
+The same runner measures plan reconciliation against one ordinary full update. In the six-stage example, retiring one confirmed stage and adding one pending stage uses 1,670 request / 2,103 response bytes and 341 bytes of plan metadata. Adding a 42-byte change summary uses 1,741 / 2,145 bytes: 71 extra request bytes and 42 extra response bytes. A semantic patch with a summary uses 342 request bytes and 121 bytes of metadata. Every accepted reconciliation still executes one BEGIN, SELECT, UPDATE and COMMIT, with no extra query, table or row. Confirming affected agents before retirement adds one necessary patch call and UPDATE. Measurements cover local dispatch/serialization/SQLite, not native host behavior.
 
 ## Optional lifecycle adapter: proposed, not installed
 
@@ -283,9 +294,7 @@ Linked executions are also deferred. An id link alone cannot grant capability-sa
 
 Distribute the reviewed source or complete plugin directory with its license. Exclude private databases, sidecars, tokens, logs, environment files, bytecode, caches, local evidence, and `.git`. This repository implies no public plugin-directory submission, signature, or host verification.
 
-Published npm version `0.1.0` cannot be replaced. Prepare a new version for changed package bytes. Check package, plugin, and marketplace version agreement for that release. Publication requires separate authorization.
-
-After choosing the next version, pack the candidate outside the repository:
+Published npm version `0.1.0` cannot be replaced. Version `0.2.0` is the current release. For future package changes, prepare a new version and check package, plugin, and marketplace version agreement. Before publication, pack and review the release artifact outside the repository:
 
 ```sh
 release_dir="$(mktemp -d)"
