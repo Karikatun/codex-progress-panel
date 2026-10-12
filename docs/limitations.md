@@ -8,7 +8,7 @@
 - A standalone MCP server entry does not install the plugin skill or activate native UI integration. Its server still supplies the HTML resource to an MCP Apps host.
 - Plan reconciliation uses explicit updates from the root owner after authorized user steering. It does not read conversations automatically.
 - Agent summaries report assignments. They do not launch, cancel or otherwise orchestrate subagents.
-- Protocol and DOM/bridge tests do not prove native host rendering, interruption behavior, geometry or screen-reader access. Native `0.2.0` acceptance remains unverified here.
+- Protocol and DOM/bridge tests do not prove native host rendering, interruption behavior, geometry or screen-reader access. Native `0.2.1` acceptance remains unverified here.
 
 ## Supported environment
 

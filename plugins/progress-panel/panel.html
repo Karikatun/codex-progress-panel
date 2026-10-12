@@ -324,7 +324,7 @@ ol{margin:0;padding:0;list-style:none}#stages>li{display:grid;grid-template-colu
     $('empty').hidden=true;
     return;
   }
-  request('ui/initialize',{appInfo:{name:'codex-progress-panel',version:'0.2.0'},appCapabilities:{availableDisplayModes:['inline']},protocolVersion:'2026-01-26'})
+  request('ui/initialize',{appInfo:{name:'codex-progress-panel',version:'0.2.1'},appCapabilities:{availableDisplayModes:['inline']},protocolVersion:'2026-01-26'})
     .then(result => {if (!result || typeof result !== 'object') throw new Error(strings.noBridge);connected=true;context(result.hostContext);send({jsonrpc:'2.0',method:'ui/notifications/initialized',params:{}});connection(strings.waiting);$('empty').hidden=true;})
     .catch(() => {connection(strings.unavailable,'error');});
 })();

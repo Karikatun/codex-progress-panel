@@ -31,13 +31,13 @@ codex plugin add codex-progress-panel@codex-progress-panel --json
 
 Start a new chat, then ask: “Show the stages of this task in the progress panel and keep them updated as you work.”
 
-The marketplace tracks `main`, which can change. Pin a reviewed Git ref with `--ref` if you need a fixed source revision. For example, `codex plugin marketplace add Karikatun/codex-progress-panel --ref main` selects the current branch. GitHub currently lists no version tags or Releases.
+The marketplace tracks `main`, which can change. Pin a reviewed Git ref with `--ref` if you need a fixed source revision. For example, `codex plugin marketplace add Karikatun/codex-progress-panel --ref main` selects the current branch.
 
 On 2026-10-12, we tested the GitHub install with Codex CLI `0.147.0` in a fresh isolated `CODEX_HOME`. GitHub `main` resolved to reviewed commit `2915a86a1bf758cbf4b4664430025a81795fec50`; the marketplace and installed plugin matched the reviewed source. The test did not change global Codex configuration. Native desktop rendering remains unverified, and `0.147.0` is not a minimum version requirement. See [installation](docs/installation.md) for local-source and standalone alternatives, updating and removal.
 
 The full plugin requires macOS or Linux, Python 3.9+ as `python3` in PATH, and a Codex host that supports plugins, plugin-relative MCP `cwd` and MCP Apps UI.
 
-Source manifests and the public npm package are `0.2.0`. On 2026-10-12, npm `latest` was `0.2.0`. [Distribution status](docs/installation.md#distribution-status) lists the evidence.
+The source manifests identify version `0.2.1`. Check [distribution status](docs/installation.md#distribution-status) for public package availability. The dated GitHub installation check above covered an earlier source revision.
 
 ## Start using it
 
@@ -56,13 +56,13 @@ The root agent reconciles the plan and reports progress. The panel does not read
 Use npm/npx when you need the server separately. It requires Node.js 22+, npm/npx and Python 3.9+ on macOS or Linux.
 
 ```sh
-npx -y codex-progress-panel@0.2.0 --help
+npx -y codex-progress-panel@0.2.1 --help
 ```
 
 Add this stdio entry through your host's supported MCP configuration:
 
 ```json
-{"mcpServers":{"progress":{"command":"npx","args":["-y","codex-progress-panel@0.2.0"]}}}
+{"mcpServers":{"progress":{"command":"npx","args":["-y","codex-progress-panel@0.2.1"]}}}
 ```
 
 This starts the standalone MCP server. It does not install the `progress-panel` skill or activate the complete plugin. The server supplies an HTML resource, but UI rendering still requires an MCP Apps host. See [standalone installation](docs/installation.md#use-the-npm-server).
@@ -74,7 +74,7 @@ The complete plugin bundles a skill, a Python standard-library stdio MCP server 
 ## Requirements and limitations
 
 - Windows is unsupported; private storage relies on POSIX ownership and permissions.
-- The host controls rendering, placement and accessibility. Native `0.2.0` acceptance remains unverified here; protocol and mock UI tests are separate evidence.
+- The host controls rendering, placement and accessibility. Native `0.2.1` acceptance remains unverified here; protocol and mock UI tests are separate evidence.
 - Completed stages do not prove successful execution finalization. A Stop action or crash before successful finish can leave a snapshot unfinished.
 - Stale means no recent confirmed update. It does not prove that the agent failed or stopped.
 - State is private and local at `~/.codex-progress-panel/progress.sqlite3`. Automatic cleanup is off by default; history is limited to 128 executions.

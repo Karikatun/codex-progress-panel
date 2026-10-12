@@ -66,7 +66,7 @@ function start(command, args, options = {}) {
   client.initialize = async () => {
     const result = await client.request('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'npm-package-test', version: '1' } });
     client.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
-    assert.deepEqual(result.serverInfo, { name: 'codex-progress-panel', version: '0.2.0' });
+    assert.deepEqual(result.serverInfo, { name: 'codex-progress-panel', version: '0.2.1' });
   };
   client.close = async () => { proc.stdin.end(); const result = await deadline(client.exit); assert.deepEqual(result, { code: 0, signal: null }, client.stderr); assert.equal(client.stderr, ''); assert.equal(client.queue.length, 0); };
   return client;
@@ -112,7 +112,7 @@ before(() => {
   npmEnv = npmEnvironment(path.join(area, 'pack-cache'));
   python = execFileSync('python3', ['-B', '-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).trim();
   const result = JSON.parse(execFileSync('npm', ['pack', PACKAGE, '--ignore-scripts', '--pack-destination', area, '--json'], { env: npmEnv, cwd: area, encoding: 'utf8', timeout: 15000 }))[0];
-  assert.equal(result.name, 'codex-progress-panel'); assert.equal(result.version, '0.2.0');
+  assert.equal(result.name, 'codex-progress-panel'); assert.equal(result.version, '0.2.1');
   assert.deepEqual(result.files.map(file => file.path).sort(), EXPECTED);
   assert.ok(result.size < 100000 && result.unpackedSize < 200000, 'unexpected payload growth');
   tarball = path.join(area, result.filename);
@@ -178,7 +178,7 @@ test('real offline npm exec: stdio, resources, update, freeze and durable restar
   assert.equal(fs.readdirSync(path.join(area, 'caller with spaces Кириллица')).length, 0);
 });
 
-test('packed 0.2.0 reconciles the same execution and preserves retirement evidence across restart', async () => {
+test('packed 0.2.1 reconciles the same execution and preserves retirement evidence across restart', async () => {
   const data=path.join(area,'dynamic plan state');let client=fromNpm(data,'dynamic fresh cache');await client.initialize();
   const initial={title:'Packed reconciliation',stages:[{id:'done',title:'Confirmed implementation',status:'completed',detail:'Verified evidence'},
     {id:'active',title:'Active verification',status:'running'},{id:'removed',title:'Removed pending requirement',status:'pending'}]};
@@ -322,7 +322,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
     const blocked = fakePython(`blocked initializing interpreter ${signal}`, `
       require('node:readline').createInterface({input:process.stdin}).on('line', line => {
         const request=JSON.parse(line);
-        if(request.method==='initialize') console.log(JSON.stringify({jsonrpc:'2.0',id:request.id,result:{serverInfo:{name:'codex-progress-panel',version:'0.2.0'}}}));
+        if(request.method==='initialize') console.log(JSON.stringify({jsonrpc:'2.0',id:request.id,result:{serverInfo:{name:'codex-progress-panel',version:'0.2.1'}}}));
       });
       setInterval(()=>{},1000);
     `);
@@ -356,7 +356,7 @@ test('SIGTERM escalates for an owned child that ignores termination', async () =
 
 test('explicit help/version work from packed launcher without Python or state', () => {
   const env = { ...npmEnv, PATH: path.join(area, 'empty PATH') };
-  assert.equal(execFileSync(process.execPath, [launcher, '--version'], { env, encoding: 'utf8' }), '0.2.0\n');
+  assert.equal(execFileSync(process.execPath, [launcher, '--version'], { env, encoding: 'utf8' }), '0.2.1\n');
   const help=execFileSync(process.execPath, [launcher, '--help'], { env, encoding: 'utf8' });
   assert.ok(help.includes('Python 3.9+')); assert.ok(help.includes('--language en|ru')); assert.ok(help.includes('config.json')); assert.ok(help.includes('--auto-cleanup-finalized')); assert.ok(help.includes('Default: off'));
 });

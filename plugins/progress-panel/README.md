@@ -2,21 +2,21 @@
 
 A local stdio MCP server and complete Codex plugin for agent-reported task progress. Each assistant execution has its own panel; successful `finish_progress` freezes its final snapshot. The panel does not independently verify code correctness.
 
-Package version: `0.2.0`. See the [main repository](https://github.com/Karikatun/codex-progress-panel) and [Russian introduction](https://github.com/Karikatun/codex-progress-panel/blob/main/README.ru.md).
+Package version: `0.2.1`. See the [main repository](https://github.com/Karikatun/codex-progress-panel) and [Russian introduction](https://github.com/Karikatun/codex-progress-panel/blob/main/README.ru.md).
 
 ## Run the standalone MCP server
 
 Use macOS or Linux with Node.js 22+, npm/npx and Python 3.9+ as `python3` in PATH. Windows is unsupported. The launcher has no third-party runtime dependencies, lifecycle scripts or interpreter installer.
 
 ```sh
-npx -y codex-progress-panel@0.2.0 --help
-npx -y codex-progress-panel@0.2.0
+npx -y codex-progress-panel@0.2.1 --help
+npx -y codex-progress-panel@0.2.1
 ```
 
 Configure a stdio MCP server through your host's supported flow:
 
 ```json
-{"mcpServers":{"progress":{"command":"npx","args":["-y","codex-progress-panel@0.2.0"]}}}
+{"mcpServers":{"progress":{"command":"npx","args":["-y","codex-progress-panel@0.2.1"]}}}
 ```
 
 The launcher finds its server independently of the caller's directory and preserves server arguments. stdout carries MCP messages; stderr carries diagnostics. It stops on stdin EOF, SIGINT or SIGTERM. It does not install Python or write Codex configuration.
@@ -27,7 +27,14 @@ The package also includes `plugin.json`, `mcp.json`, `server.py`, `panel.html` a
 
 A standalone MCP entry does not install the skill or activate the complete plugin. The server supplies the HTML resource, but rendering requires an MCP Apps host. Full-plugin use additionally needs local plugins and plugin-relative MCP `cwd`. The host controls placement and accessibility.
 
-Follow the [complete plugin installation guide](https://github.com/Karikatun/codex-progress-panel/blob/main/docs/installation.md) to install from GitHub or local source. Direct GitHub installation was verified with Codex CLI `0.147.0` in an isolated `CODEX_HOME`; native UI remains unverified. The local-source and npm-source full-plugin routes were not tested here. Start a new chat after plugin installation and ask:
+To install the complete plugin from GitHub, add its marketplace and plugin:
+
+```sh
+codex plugin marketplace add Karikatun/codex-progress-panel
+codex plugin add codex-progress-panel@codex-progress-panel --json
+```
+
+The GitHub marketplace tracks mutable `main`; use `--ref` with a reviewed commit to pin the source. Follow the [complete plugin installation guide](https://github.com/Karikatun/codex-progress-panel/blob/main/docs/installation.md) for local-source setup, updates and removal. A prior GitHub installation was verified with Codex CLI `0.147.0` in an isolated `CODEX_HOME`; native UI remains unverified. The local-source and npm-source full-plugin routes were not tested here. Start a new chat after plugin installation and ask:
 
 > Show the stages of this task in the progress panel and keep them updated as you work.
 
@@ -45,7 +52,7 @@ See [configuration and storage](https://github.com/Karikatun/codex-progress-pane
 
 ## Verification limits
 
-The server has no network listener, transcript access, telemetry, external assets or background daemon. Protocol tests and DOM/bridge mocks do not prove native rendering, Stop/restart behavior or screen-reader access. Native `0.2.0` acceptance remains unverified here; use the [development checklist](https://github.com/Karikatun/codex-progress-panel/blob/main/docs/development.md#native-acceptance-checklist).
+The server has no network listener, transcript access, telemetry, external assets or background daemon. Protocol tests and DOM/bridge mocks do not prove native rendering, Stop/restart behavior or screen-reader access. Native `0.2.1` acceptance remains unverified here; use the [development checklist](https://github.com/Karikatun/codex-progress-panel/blob/main/docs/development.md#native-acceptance-checklist).
 
 [Limitations and deferred features](https://github.com/Karikatun/codex-progress-panel/blob/main/docs/limitations.md) and the technical references are in English.
 

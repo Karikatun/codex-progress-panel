@@ -41,7 +41,7 @@ This version does not migrate or modify the former local plugin's data directory
 Automatic cleanup is off by default, including the plugin manifest. To opt in for the exact private directory you select, add the separate server flag:
 
 ```sh
-npx -y codex-progress-panel@0.2.0 --data-dir /absolute/private/directory --auto-cleanup-finalized
+npx -y codex-progress-panel@0.2.1 --data-dir /absolute/private/directory --auto-cleanup-finalized
 # Full plugin server: python3 -B server.py --data-dir /absolute/private/directory --auto-cleanup-finalized
 ```
 

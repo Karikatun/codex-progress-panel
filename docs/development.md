@@ -21,7 +21,7 @@ The local full-plugin flow for `0.1.0` also passed a user-confirmed native two-t
 
 ## Native acceptance checklist
 
-Use a reviewed `0.2.0` source or package on your target host:
+Use a reviewed `0.2.1` source or package on your target host:
 
 1. Create execution A in one user turn.
 2. Finish A.
@@ -35,7 +35,7 @@ Use a reviewed `0.2.0` source or package on your target host:
 10. Repeat interruption through process exit; restart the MCP server and reopen the retained execution with its read capability.
 11. Check lost connection, hide/show and UI closure without stage changes or implicit finish.
 12. Check 1–4 agents, long text, narrow layout, light/dark themes and screen-reader announcements.
-13. Record the host version and observations. Native `0.2.0` behavior remains unverified until this check runs.
+13. Record the host version and observations. Native `0.2.1` behavior remains unverified until this check runs.
 
 Repeat this check for an npm-source full-plugin installation before claiming that route is verified.
 
@@ -61,7 +61,7 @@ The same runner measures plan reconciliation against one ordinary full update. I
 
 Distribute the reviewed source or complete plugin directory with its license. Exclude private databases, sidecars, tokens, logs, environment files, bytecode, caches, local evidence, and `.git`. This repository implies no public plugin-directory submission, signature, or host verification.
 
-Published npm versions cannot be replaced. The source manifests and public npm package are `0.2.0`; no GitHub tag or Release was listed on 2026-10-12. See [distribution status](installation.md#distribution-status). For future package changes, prepare a new version and check package, plugin, and marketplace version agreement. Before publication, pack and review the release artifact outside the repository:
+Published npm versions cannot be replaced. The source manifests and npm marketplace pin identify `0.2.1`; check [distribution status](installation.md#distribution-status) for public availability. For future package changes, prepare a new version and check package, plugin, and marketplace version agreement. Before publication, pack and review the release artifact outside the repository:
 
 ```sh
 release_dir="$(mktemp -d)"
