@@ -1,149 +1,54 @@
-# codex-progress-panel 0.2.0
+# codex-progress-panel
 
-[English](#english) | [Русский](#русский)
+A local stdio MCP server and complete Codex plugin for agent-reported task progress. Each assistant execution has its own panel; successful `finish_progress` freezes its final snapshot. The panel does not independently verify code correctness.
 
-`0.2.0` adds reliable stale-state observation, agent summaries, compact patch updates, and explicit opt-in cleanup of finalized history. Версия `0.2.0` добавляет надёжное отображение устаревшего состояния, сводки агентов, компактные patch-обновления и явно включаемую очистку финализированной истории.
+Package version: `0.2.0`. See the [main repository](https://github.com/Karikatun/codex-progress-panel) and [Russian introduction](https://github.com/Karikatun/codex-progress-panel/blob/main/README.ru.md).
 
-## English
+## Run the standalone MCP server
 
-A local stdio MCP server and full Codex plugin. Each assistant execution gets a separate progress widget. `finish_progress` permanently freezes its actual final snapshot. Pending or blocked stages can remain. Later executions cannot change that history.
+Use macOS or Linux with Node.js 22+, npm/npx and Python 3.9+ as `python3` in PATH. Windows is unsupported. The launcher has no third-party runtime dependencies, lifecycle scripts or interpreter installer.
 
-### Requirements and npm server
+```sh
+npx -y codex-progress-panel@0.2.0 --help
+npx -y codex-progress-panel@0.2.0
+```
 
-Use macOS or Linux, Node.js 22+, npm/npx, and Python 3.9+ as `python3` in PATH. Windows is unsupported. The full plugin launches Python directly and does not need the Node launcher. The server has no third-party Python dependencies.
-
-This guide covers [`codex-progress-panel@0.2.0`](https://www.npmjs.com/package/codex-progress-panel/v/0.2.0). Configure a stdio MCP server:
+Configure a stdio MCP server through your host's supported flow:
 
 ```json
 {"mcpServers":{"progress":{"command":"npx","args":["-y","codex-progress-panel@0.2.0"]}}}
 ```
 
-Run the server or read its help:
+The launcher finds its server independently of the caller's directory and preserves server arguments. stdout carries MCP messages; stderr carries diagnostics. It stops on stdin EOF, SIGINT or SIGTERM. It does not install Python or write Codex configuration.
 
-```sh
-npx -y codex-progress-panel@0.2.0
-npx -y codex-progress-panel@0.2.0 --help
-```
+## Complete plugin versus standalone server
 
-Append `--data-dir /absolute/private/directory` to select another state directory. The launcher preserves server arguments and finds its files independently of the caller's directory. stdout contains MCP messages; stderr contains diagnostics. The process stops on stdin EOF, SIGINT, or SIGTERM.
+The package also includes `plugin.json`, `mcp.json`, `server.py`, `panel.html` and `skills/progress-panel/SKILL.md`. Installing the complete plugin through a reviewed marketplace connects these components together. Its manifest runs Python directly, without the Node launcher.
 
-The launcher installs no interpreter, dependencies, or Codex configuration. Public npx checks for `0.1.0` passed in two fresh caches. The published `0.1.0` tarball remains unchanged.
+A standalone MCP entry does not install the skill or activate the complete plugin. The server supplies the HTML resource, but rendering requires an MCP Apps host. Full-plugin use additionally needs local plugins and plugin-relative MCP `cwd`. The host controls placement and accessibility.
 
-### English example
+Follow the [complete plugin installation guide](https://github.com/Karikatun/codex-progress-panel/blob/main/docs/installation.md). The repository's npm marketplace variant pins `0.2.0`; npm-source full-plugin installation and native UI remain unverified here. Start a new chat after plugin installation and ask:
 
-![English progress panel](https://raw.githubusercontent.com/Karikatun/codex-progress-panel/main/docs/images/progress-panel-en.png)
+> Show the stages of this task in the progress panel and keep them updated as you work.
 
-This actual panel preview uses illustrative English data and the default English UI. Native Codex rendering and placement need separate verification.
+## Configuration essentials
 
-### Select the UI language
+State lives in `~/.codex-progress-panel/progress.sqlite3`, outside the package and caches. Append `--data-dir /absolute/private/directory` to select another private directory; its parent must exist. Unsafe ownership, permissions, symlinks, hardlinked databases and unsafe SQLite sidecars are refused. State survives server restarts and package removal.
 
-The UI uses English by default. To use Russian labels, create `~/.codex-progress-panel/config.json`:
+UI labels are English by default. For Russian labels, use `--language ru` or a private `config.json` beside the database containing `{"language":"ru"}`. The file must be UTF-8, at most 1024 bytes, owned by your OS user, with one hard link and private permissions such as `0600`. Invalid configuration stops startup. The language flag skips the file; restart the server after changing configuration. Task text keeps its supplied language.
 
-```json
-{"language":"ru"}
-```
+History is limited to 128 executions. Automatic cleanup is off by default. `--auto-cleanup-finalized` opts in for the selected directory: only creation at capacity deletes one oldest confirmed finalized execution in the same transaction as the new insert. Unfinished or stale executions are never eligible. Deletion revokes their capabilities and cannot be undone; file shrinkage is not guaranteed. Preserve needed history before enabling it.
 
-With a custom `--data-dir`, put the file beside `progress.sqlite3`. Use a regular UTF-8 file owned by your OS user, with permissions `0600` and one hard link. Its limit is 1024 bytes. The exact object accepts `language` with value `en` or `ru`. Symlinks and group/other permissions are refused.
+Only the root owner reports progress and finalizes executions. Keep read/write capabilities private; subagents report to that owner. Completed stages do not prove finalization. Stop or a crash can leave an unfinished snapshot. Stale means no confirmed update for two minutes, not that the agent failed or stopped. Agent summaries do not orchestrate agents, and plan reconciliation does not read conversations automatically.
 
-The server reads the file once at startup, before opening SQLite. A missing file selects English. An invalid file stops startup on stderr without rewriting it. Restart the MCP server after changing the file. Existing widgets keep their language. `--language en` or `--language ru` overrides and skips the file, including an invalid file. Host/browser language does not select the UI language. Supplied task text keeps its original language.
+See [configuration and storage](https://github.com/Karikatun/codex-progress-panel/blob/main/docs/configuration.md), [protocol and recovery](https://github.com/Karikatun/codex-progress-panel/blob/main/docs/protocol.md), and [architecture and security](https://github.com/Karikatun/codex-progress-panel/blob/main/docs/architecture.md). Updates and uninstall instructions are in the [installation guide](https://github.com/Karikatun/codex-progress-panel/blob/main/docs/installation.md#update-and-uninstall). Removing the package preserves private state; archive or delete only the exact data directory with explicit authorization and the server stopped.
 
-### Full plugin and safe operation
+## Verification limits
 
-An MCP server entry does not install the `progress-panel` skill. The package also includes `plugin.json`, `mcp.json`, the Python server, HTML UI, and `skills/progress-panel/SKILL.md`. Use a reviewed marketplace installation for the full plugin. The host controls rendering and placement.
+The server has no network listener, transcript access, telemetry, external assets or background daemon. Protocol tests and DOM/bridge mocks do not prove native rendering, Stop/restart behavior or screen-reader access. Native `0.2.0` acceptance remains unverified here; use the [development checklist](https://github.com/Karikatun/codex-progress-panel/blob/main/docs/development.md#native-acceptance-checklist).
 
-The source repository's `distribution/marketplace.npm.json` pins npm version `0.2.0`. A host using that source needs npm and npm marketplace support. Full-plugin installation and native UI from the npm source remain unverified. The local-source route is documented in the repository guide. For version `0.2.0`, use the reviewed `main` branch.
+[Limitations and deferred features](https://github.com/Karikatun/codex-progress-panel/blob/main/docs/limitations.md) and the technical references are in English.
 
-Start a new chat after installation. Example request: **«Покажи этапы работы в панели и обновляй её по мере выполнения задачи.»**
+## License
 
-Keep `{task_id, write_token, read_token, revision, known snapshot, assignment associations}` private through compaction when available. Only the root owner writes; subagents get no capabilities. Update requires `expected_revision` and either a complete snapshot or `patch`; finish requires the complete final snapshot. A patch preserves omitted fields and names existing stages by id; it cannot add, delete or reorder stages. Empty summaries clear text and `agents: []` clears an agent list. Responses remain complete. Optional `stage.agents` contains up to eight summaries; agent completion never completes the stage. After a stale revision, read with `get_progress` and retry the intended write once. Stop writes after finalization. Lost tokens require text progress; do not open a replacement widget in that execution. A crash or Stop before successful finish can leave the snapshot unfinished. Every unfinished snapshot becomes stale after two minutes, even with completed stages. Same-revision reads never refresh the confirmed update time. Failed reads retain the last snapshot and show unavailable/reconnection status. The UI never changes stages or finalizes from elapsed time. Native interruption, restart, four-agent layout and accessibility still need a host check.
-
-### Dynamic plans
-
-User steering during active work keeps the same execution and widget. Keep unchanged ids and verified completion; new requirements and re-verification get fresh ids. `update_progress` accepts optional `plan_change: {"summary":"User added an export check"}` (nonblank, 600 codepoints) beside patch or full mode. Patches refine existing work; full snapshots add, retire or reorder stages. Server-owned optional `state.plan` records a plan revision, change time, summary and up to 32 exact retired stages. Structural calls derive metadata without a summary; old snapshots stay readable. The UI shows current stages and a localized Plan updated notice with stable DOM nodes.
-
-Confirm affected delegated completion/cancellation through the existing authorized mechanism and publish a patch before retirement. Agent-only `cancelled` means confirmed cancellation. Retain unaffected and terminal summaries; bind reports to live stage and assignment ids, give superseded assignments fresh ids and ignore stale reports. The server rejects unresolved structural removal, completed regressions and retired id reuse; real cancellation, semantic scope and root identity remain owner responsibilities. On CAS conflict read once and reconstruct from the latest verified state, then retry once. Finalization preserves immutable history. The 32-record or complete 64 KiB bound rejects atomically without pruning evidence. Compaction retains capabilities and assignment associations; lost capabilities use text progress.
-
-### State, updates, and removal
-
-State lives in `~/.codex-progress-panel/progress.sqlite3`, outside `CODEX_HOME`, the package, and caches. A custom data directory must be absolute and private. Its parent must exist. The server refuses package/marketplace state, unsafe ownership or permissions, symlinks, hardlinked databases, and unsafe SQLite sidecars. It does not migrate the former local plugin's data.
-
-The store retains at most 128 executions, including finalized history. Automatic cleanup is off by default. At capacity, existing authenticated reads, updates and finish still work; creation advises a fresh private directory. New stored snapshots are limited to 64 KiB compact UTF-8 including metadata, separately from the 64 KiB ingress line limit. Legacy reads do not rewrite state or apply the new total byte cap. Tokens have no automatic expiry. Removing their execution state revokes them. Same-user database access and host privileges are outside this capability boundary.
-
-Opt in for the exact private directory with `--auto-cleanup-finalized`, for example `npx -y codex-progress-panel@0.2.0 --data-dir /absolute/private/directory --auto-cleanup-finalized` (or add the flag to the full plugin server arguments). The shipped manifest keeps it off. Only creation at exactly 128 rows deletes one oldest confirmed finalized execution, ordered by `finalized_at` in UTC then id, and inserts the new row in the same SQLite transaction. Duplicate ids, invalid input or stored state, failed inserts, and no eligible history preserve all rows. Unfinished, stale, all-completed but unfinalized, and legacy rows are never deleted. Startup/read/update/finish do not clean up. Task capabilities and the single writer remain unchanged. Deleted tokens are revoked even if the id is reused; frozen widgets keep their snapshot, while reopening deleted history is unavailable. Disabling cannot restore history. Freed SQLite pages can be reused; file shrinkage and legacy volume are not guaranteed.
-
-Review the latest npm release before using unversioned npx. Review each new plugin release before changing its marketplace version pin. Removal and cache changes preserve private state. Remove the MCP entry or plugin through your host's supported flow. npx needs no global installation. Archive or delete only the exact private directory with explicit authorization. Stop the server first. Confirm that its history is no longer needed.
-
-See the repository guide for all tools, limits, tests, and native acceptance: [English](https://github.com/Karikatun/codex-progress-panel/blob/main/README.md), [Русский](https://github.com/Karikatun/codex-progress-panel/blob/main/README.ru.md).
-
-## Русский
-
-Локальный stdio MCP-сервер и полный плагин Codex. Каждый запуск ассистента получает отдельный виджет прогресса. `finish_progress` навсегда фиксирует фактический итоговый снимок. В нём могут оставаться ожидающие или заблокированные этапы. Последующие запуски не меняют эту историю.
-
-### Требования и npm-сервер
-
-Используйте macOS или Linux, Node.js 22+, npm/npx и Python 3.9+ под именем `python3` в PATH. Windows не поддерживается. Полный плагин запускает Python напрямую и не требует запускающего модуля Node. У сервера нет сторонних зависимостей Python.
-
-Это руководство для [`codex-progress-panel@0.2.0`](https://www.npmjs.com/package/codex-progress-panel/v/0.2.0). Настройте stdio MCP-сервер:
-
-```json
-{"mcpServers":{"progress":{"command":"npx","args":["-y","codex-progress-panel@0.2.0"]}}}
-```
-
-Запустите сервер или прочитайте справку:
-
-```sh
-npx -y codex-progress-panel@0.2.0
-npx -y codex-progress-panel@0.2.0 --help
-```
-
-Добавьте `--data-dir /absolute/private/directory` для другого каталога данных. Модуль сохраняет аргументы сервера и находит файлы независимо от текущего каталога. stdout содержит сообщения MCP; stderr — диагностику. Процесс завершается при EOF в stdin, SIGINT или SIGTERM.
-
-Модуль не устанавливает интерпретатор, зависимости или конфигурацию Codex. Проверки публичного npx версии `0.1.0` прошли в двух новых кешах. Опубликованный архив `0.1.0` остаётся неизменным.
-
-### Английский пример
-
-![Панель прогресса на английском](https://raw.githubusercontent.com/Karikatun/codex-progress-panel/main/docs/images/progress-panel-en.png)
-
-Пример настоящей панели использует демонстрационные английские данные и английский UI по умолчанию. Встроенное отображение и размещение в Codex требуют отдельной проверки.
-
-### Выбор языка интерфейса
-
-По умолчанию интерфейс использует английский. Для русских подписей создайте `~/.codex-progress-panel/config.json`:
-
-```json
-{"language":"ru"}
-```
-
-При своём `--data-dir` разместите файл рядом с `progress.sqlite3`. Используйте обычный UTF-8 файл вашего пользователя ОС, с правами `0600` и одной жёсткой ссылкой. Лимит — 1024 байта. Точный объект принимает `language` со значением `en` или `ru`. Симлинки и права группы или остальных отклоняются.
-
-Сервер читает файл один раз при запуске, до открытия SQLite. Если файла нет, он выбирает английский. Некорректный файл останавливает запуск с диагностикой в stderr без перезаписи. Перезапустите MCP-сервер после изменения файла. Существующие виджеты сохраняют язык. `--language en` или `--language ru` переопределяет и пропускает файл, даже некорректный. Язык хоста или браузера не выбирает язык UI. Переданный текст задачи сохраняет исходный язык.
-
-### Полный плагин и безопасная работа
-
-MCP-запись не устанавливает skill `progress-panel`. Пакет также содержит `plugin.json`, `mcp.json`, сервер Python, HTML UI и `skills/progress-panel/SKILL.md`. Для полного плагина используйте проверенную установку через marketplace. Хост управляет отображением и размещением.
-
-Файл `distribution/marketplace.npm.json` в репозитории закрепляет npm-версию `0.2.0`. Хосту нужны npm и поддержка npm-источников marketplace. Установка полного плагина и встроенный UI из npm-источника пока не проверены. Установка из локального исходного кода описана в руководстве репозитория. Для версии `0.2.0` используйте проверенную ветку `main`.
-
-После установки начните новый чат. Пример запроса: **«Покажи этапы работы в панели и обновляй её по мере выполнения задачи.»**
-
-Приватно сохраняйте `{task_id, write_token, read_token, revision, known snapshot, assignment associations}` через сжатие контекста, когда это возможно. Только основной владелец пишет прогресс; субагенты не получают capabilities. Обновление требует `expected_revision` и полный снимок или `patch`; завершение требует полный итоговый снимок. Patch сохраняет пропущенные поля и меняет существующие этапы по id, без добавления, удаления или перестановки. Пустые сводки очищают текст, `agents: []` очищает список агентов. Ответ остаётся полным. Необязательное `stage.agents` содержит до восьми сводок; завершение агента не завершает этап. После устаревшей ревизии прочитайте снимок через `get_progress` и повторите нужную запись один раз. Прекратите запись после финализации. При потере токенов используйте текстовые обновления; не открывайте заменяющий виджет в этом запуске. Сбой или Stop до успешного завершения могут оставить снимок незавершённым. Любой такой снимок устаревает через две минуты, даже с завершёнными этапами. Чтение той же ревизии не меняет время подтверждённого обновления. Ошибка чтения сохраняет снимок и показывает недоступность/переподключение. UI не меняет этапы и не финализирует по времени. Прерывание, перезапуск, четыре агента и доступность ещё требуют проверки на хосте.
-
-### Изменение плана
-
-Уточнения пользователя во время работы сохраняют тот же запуск и виджет. Сохраняйте неизменные id и проверенное завершение; новым требованиям и повторной проверке нужны новые id. `update_progress` принимает необязательный `plan_change: {"summary":"Добавлена проверка экспорта"}` (непустой, до 600 кодовых точек) рядом с patch или полным снимком. Patch уточняет существующую работу, полный снимок добавляет, снимает и переставляет этапы. Серверное необязательное `state.plan` содержит ревизию плана, время, сводку и до 32 точных записей снятых этапов. Структурные вызовы создают метаданные без сводки; старые снимки читаются. UI показывает текущие этапы, подпись «План обновлён» и сохраняет DOM-элементы по id.
-
-Подтвердите завершение/отмену затронутых поручений через существующий разрешённый механизм и сначала опубликуйте patch. Агентский `cancelled` означает подтверждённую отмену. Сохраняйте незатронутые и итоговые сводки; привязывайте отчёты к актуальным id этапа и поручения, заменённым поручениям давайте новый id, запоздалые результаты игнорируйте. Сервер отклоняет структурное удаление нерешённых поручений, сброс завершения и возврат снятых id; фактическая отмена, смысл требований и личность владельца остаются его ответственностью. При CAS-конфликте прочитайте снимок один раз, восстановите изменение из нового проверенного состояния и повторите запись один раз. Финализация сохраняет неизменяемую историю. Лимит 32 записи или 64 KiB отклоняет всю запись без очистки доказательств. Сжатие контекста сохраняет capabilities и привязки поручений; потеря capabilities оставляет текстовые обновления.
-
-### Данные, обновление и удаление
-
-Данные находятся в `~/.codex-progress-panel/progress.sqlite3`, вне `CODEX_HOME`, пакета и кешей. Другой каталог должен быть абсолютным и приватным. Его родитель должен существовать. Сервер отклоняет данные внутри пакета/marketplace, небезопасного владельца или права, симлинки, жёсткие ссылки на базу и небезопасные вспомогательные файлы SQLite. Он не переносит данные прежнего локального плагина.
-
-Хранилище содержит не более 128 запусков, включая итоговую историю. Автоматическая очистка по умолчанию выключена. При лимите существующие авторизованные чтение, обновление и завершение работают; создание предлагает новый приватный каталог. Новый сохраняемый снимок ограничен 64 KiB компактного UTF-8 с метаданными, отдельно от лимита входящей строки 64 KiB. Чтение старых записей не перезаписывает их и не применяет новый общий лимит. У токенов нет автоматического срока действия. Удаление данных запуска отзывает его токены. Доступ к базе от того же пользователя и привилегии хоста находятся вне этой границы защиты.
-
-Включите очистку для точного приватного каталога флагом `--auto-cleanup-finalized`, например `npx -y codex-progress-panel@0.2.0 --data-dir /absolute/private/directory --auto-cleanup-finalized` (или добавьте флаг в аргументы сервера полного плагина). В поставляемом манифесте она выключена. Только создание при ровно 128 строках удаляет один самый старый подтверждённо финализированный запуск по `finalized_at` в UTC, затем по id, и вставляет новую строку в той же транзакции SQLite. Повторный id, неверный входной снимок или сохранённые данные, ошибка вставки и отсутствие подходящей истории сохраняют все строки. Незавершённые, устаревшие, старые и снимки со всеми завершёнными этапами без финализации не удаляются. Запуск сервера, чтение, обновление и завершение не очищают историю. Права доступа и единый владелец записи сохраняются. Токены удалённого запуска отзываются даже при повторном использовании id; зафиксированный виджет сохраняет снимок, повторное открытие недоступно. Выключение не восстанавливает историю. SQLite может повторно использовать свободные страницы; уменьшение файла и объём старых данных не гарантированы.
-
-Проверяйте актуальный npm-выпуск перед использованием npx без версии. Проверяйте новый выпуск плагина перед изменением закреплённой версии marketplace. Удаление и изменения кеша сохраняют приватные данные. Удалите MCP-запись или плагин поддерживаемым хостом способом. Для npx глобальная установка не нужна. Архивируйте или удаляйте только точный приватный каталог с явным разрешением. Сначала остановите сервер. Подтвердите, что история больше не нужна.
-
-Все инструменты, ограничения, тесты и проверка встроенного интерфейса описаны в руководстве репозитория: [English](https://github.com/Karikatun/codex-progress-panel/blob/main/README.md), [Русский](https://github.com/Karikatun/codex-progress-panel/blob/main/README.ru.md).
-
-[MIT license / Лицензия MIT](LICENSE), copyright 2026 Karikatun.
+[MIT](LICENSE), copyright 2026 Karikatun.
