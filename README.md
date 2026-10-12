@@ -33,11 +33,9 @@ Start a new chat, then ask: “Show the stages of this task in the progress pane
 
 The marketplace tracks `main`, which can change. Pin a reviewed Git ref with `--ref` if you need a fixed source revision. For example, `codex plugin marketplace add Karikatun/codex-progress-panel --ref main` selects the current branch.
 
-On 2026-10-12, we tested the GitHub install with Codex CLI `0.147.0` in a fresh isolated `CODEX_HOME`. GitHub `main` resolved to reviewed commit `2915a86a1bf758cbf4b4664430025a81795fec50`; the marketplace and installed plugin matched the reviewed source. The test did not change global Codex configuration. Native desktop rendering remains unverified, and `0.147.0` is not a minimum version requirement. See [installation](docs/installation.md) for local-source and standalone alternatives, updating and removal.
-
 The full plugin requires macOS or Linux, Python 3.9+ as `python3` in PATH, and a Codex host that supports plugins, plugin-relative MCP `cwd` and MCP Apps UI.
 
-The source manifests identify version `0.2.1`. Check [distribution status](docs/installation.md#distribution-status) for public package availability. The dated GitHub installation check above covered an earlier source revision.
+The source manifests identify version `0.2.1`. Check [distribution status](docs/installation.md#distribution-status) for public package availability.
 
 ## Start using it
 
