@@ -27,7 +27,7 @@ The package also includes `plugin.json`, `mcp.json`, `server.py`, `panel.html` a
 
 A standalone MCP entry does not install the skill or activate the complete plugin. The server supplies the HTML resource, but rendering requires an MCP Apps host. Full-plugin use additionally needs local plugins and plugin-relative MCP `cwd`. The host controls placement and accessibility.
 
-Follow the [complete plugin installation guide](https://github.com/Karikatun/codex-progress-panel/blob/main/docs/installation.md). The repository's npm marketplace variant pins `0.2.0`; npm-source full-plugin installation and native UI remain unverified here. Start a new chat after plugin installation and ask:
+Follow the [complete plugin installation guide](https://github.com/Karikatun/codex-progress-panel/blob/main/docs/installation.md) to install from GitHub or local source. Direct GitHub installation was verified with Codex CLI `0.147.0` in an isolated `CODEX_HOME`; native UI remains unverified. The local-source and npm-source full-plugin routes were not tested here. Start a new chat after plugin installation and ask:
 
 > Show the stages of this task in the progress panel and keep them updated as you work.
 

@@ -1,6 +1,6 @@
 # Installation and removal
 
-The recommended route installs the complete plugin from a reviewed local source checkout. The npm launcher is an alternative for a standalone stdio MCP server. These routes have different host integration requirements.
+The recommended route installs the complete plugin directly from its GitHub marketplace. A local source checkout is available for developers who want to review or change the code. The npm launcher is an alternative for a standalone stdio MCP server. These routes have different host integration requirements.
 
 ## Distribution status
 
@@ -8,35 +8,41 @@ Checked on 2026-10-12: the package and plugin manifests are `0.2.0`; the public 
 
 Sources: [npm metadata](https://registry.npmjs.org/codex-progress-panel), [GitHub tags](https://api.github.com/repos/Karikatun/codex-progress-panel/tags), [GitHub releases](https://api.github.com/repos/Karikatun/codex-progress-panel/releases).
 
-## Install the full plugin from local source
+## Recommended: install the full plugin from GitHub
 
-Use a reviewed source checkout that contains `.agents/plugins/marketplace.json` and `plugins/progress-panel`. The source manifests identify version `0.2.0`. Use `main`, then review and record its commit before activation.
+Codex supports GitHub shorthand as a marketplace source. Add this repository, then install its plugin:
 
-For a new checkout, select that branch explicitly:
+```sh
+codex plugin marketplace add Karikatun/codex-progress-panel
+codex plugin add codex-progress-panel@codex-progress-panel --json
+```
+
+The marketplace tracks `main`, so its contents can change. Codex supports `--ref` to select a Git ref when adding the marketplace. For example, `codex plugin marketplace add Karikatun/codex-progress-panel --ref main` selects the current branch. The repository currently has no version tag or GitHub Release; use a reviewed commit when you need a fixed revision. The command syntax matches Codex CLI `0.147.0` help, and the marketplace and plugin names match the repository manifests.
+
+On 2026-10-12, we tested the GitHub install with Codex CLI `0.147.0` in a fresh isolated home. GitHub `main` resolved to reviewed commit `2915a86a1bf758cbf4b4664430025a81795fec50`. The marketplace and installed plugin matched all 12 reviewed source paths, types, modes and file contents. The test did not change global Codex configuration. This verifies CLI installation only; native desktop rendering remains unverified. Codex CLI `0.147.0` is not a minimum version requirement.
+
+The complete plugin requires macOS or Linux, Python 3.9+ as `python3` in PATH, and a Codex host that supports plugins, plugin-relative MCP `cwd` and MCP Apps UI.
+
+The official OpenAI guide documents [adding a GitHub marketplace and pinning a ref](https://developers.openai.com/plugins/build/plugins#add-a-marketplace-from-the-cli). The repository's marketplace lists the complete plugin, so no separate local configuration is required. Installation and native UI remain unverified on this host.
+
+Start a new chat after installation. If your host requires a restart, preserve running work first.
+
+Example request: **Show the stages of this task in the progress panel and keep them updated as you work.**
+
+## Alternative: install from local source
+
+Use this route if you want to review, test or modify the source before installing. Clone the repository, then add the local marketplace:
 
 ```sh
 git clone --branch main --single-branch https://github.com/Karikatun/codex-progress-panel.git
 cd codex-progress-panel
-```
-
-Review the source before activation. From that checkout's root, run each command:
-
-```sh
-codex --version
 codex plugin marketplace add "$PWD"
 codex plugin add codex-progress-panel@codex-progress-panel --json
-codex plugin list --json
 ```
 
-The command syntax was checked against Codex CLI `0.147.0` help. The marketplace and plugin names match the supplied manifests. This is not an installation or native-host test, and `0.147.0` is not a minimum version requirement. If your CLI lacks these commands, register the marketplace through the supported local flow, open the Plugins Directory, choose the marketplace and install the plugin. The CLI plugin browser is `/plugins`.
+The plugin manifest runs `python3 -B server.py`. The marketplace commands were checked against Codex CLI `0.147.0`; this is not a minimum version requirement.
 
-Official OpenAI documentation describes [adding a local marketplace](https://developers.openai.com/plugins/build/plugins#add-a-marketplace-from-the-cli), [local plugin installation](https://developers.openai.com/plugins/build/plugins#install-a-local-plugin-manually), and [installing a plugin and starting a new chat](https://learn.chatgpt.com/docs/plugins#install-and-use-a-plugin). These sources establish the supported workflow, not that this plugin was installed or rendered on your host.
-
-Start a new chat after installation. Preserve running work before a restart required by the host.
-
-Example request: **Show the stages of this task in the progress panel and keep them updated as you work.**
-
-The plugin root is `plugins/progress-panel`. It contains portable `plugin.json` and `mcp.json` manifests. The repository marketplace points to that directory. The relative `cwd: "./"` resolves from the installed plugin root. The manifest runs `python3 -B server.py`.
+The local-source route was not tested here. The direct GitHub route does not need a local checkout or a separate marketplace file. Both routes still require a host that supports plugins, plugin-relative MCP `cwd` and MCP Apps UI.
 
 ## Use the npm server
 
@@ -56,7 +62,9 @@ npx -y codex-progress-panel@0.2.0 --help
 
 To select another state directory, append `--data-dir` and its absolute path as separate arguments. Normal operation sends MCP messages to stdout and diagnostics to stderr. The launcher finds its server independently of the caller's directory. It stops on stdin EOF, SIGINT, or SIGTERM.
 
-This configuration adds the MCP server. It does not install the `progress-panel` skill. Use the full plugin route to install the skill and host integration. The standalone server also supplies the UI resource; an MCP Apps host must render it. The host still controls UI rendering.
+This configuration adds only the MCP server. It does not install the `progress-panel` skill or the complete plugin. Use the GitHub marketplace or local-source route for the skill and host integration. The standalone server also supplies the UI resource; an MCP Apps host must render it. The host controls UI rendering.
+
+The standalone `npx` host setup and npm-source full-plugin installation were not tested here.
 
 The npm package also contains the complete plugin. [distribution/marketplace.npm.json](../distribution/marketplace.npm.json) pins its npm source to `0.2.0`. Use that reviewed variant through a host that supports npm marketplace sources. That host needs npm. Full-plugin installation and native UI from the npm source remain unverified.
 

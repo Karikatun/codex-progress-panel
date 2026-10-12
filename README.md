@@ -22,28 +22,22 @@ The panel displays progress reported by the agent. It does not independently ver
 
 ## Install the complete plugin
 
-Use the local-source route to install the skill, MCP server and UI integration together. You need macOS or Linux, Python 3.9+ as `python3` in PATH, and a Codex host that supports local plugins, plugin-relative MCP `cwd` and MCP Apps UI.
-
-Clone the source and review it before activation:
+Install the complete plugin, including its skill, MCP server and UI integration, directly from GitHub:
 
 ```sh
-git clone --branch main --single-branch https://github.com/Karikatun/codex-progress-panel.git
-cd codex-progress-panel
-```
-
-From the checkout root:
-
-```sh
-codex plugin marketplace add "$PWD"
+codex plugin marketplace add Karikatun/codex-progress-panel
 codex plugin add codex-progress-panel@codex-progress-panel --json
-codex plugin list --json
 ```
 
-Start a new chat after installation. If your host requires a restart, preserve running work first. If these CLI commands are unavailable, use the host's local marketplace installation flow.
+Start a new chat, then ask: “Show the stages of this task in the progress panel and keep them updated as you work.”
 
-The command syntax matches Codex CLI `0.147.0` help and the repository manifests; installation and native UI were not tested by this documentation update. See [installation](docs/installation.md) for the official workflow, updating and removal.
+The marketplace tracks `main`, which can change. Pin a reviewed Git ref with `--ref` if you need a fixed source revision. For example, `codex plugin marketplace add Karikatun/codex-progress-panel --ref main` selects the current branch. GitHub currently lists no version tags or Releases.
 
-Source manifests and the public npm package are `0.2.0`. On 2026-10-12, npm `latest` was `0.2.0`, and GitHub listed no version tags or Releases. `main` is mutable: review and record its commit for a fixed source reference. [Distribution status](docs/installation.md#distribution-status) lists the evidence.
+On 2026-10-12, we tested the GitHub install with Codex CLI `0.147.0` in a fresh isolated `CODEX_HOME`. GitHub `main` resolved to reviewed commit `2915a86a1bf758cbf4b4664430025a81795fec50`; the marketplace and installed plugin matched the reviewed source. The test did not change global Codex configuration. Native desktop rendering remains unverified, and `0.147.0` is not a minimum version requirement. See [installation](docs/installation.md) for local-source and standalone alternatives, updating and removal.
+
+The full plugin requires macOS or Linux, Python 3.9+ as `python3` in PATH, and a Codex host that supports plugins, plugin-relative MCP `cwd` and MCP Apps UI.
+
+Source manifests and the public npm package are `0.2.0`. On 2026-10-12, npm `latest` was `0.2.0`. [Distribution status](docs/installation.md#distribution-status) lists the evidence.
 
 ## Start using it
 
