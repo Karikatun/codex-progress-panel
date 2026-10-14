@@ -61,11 +61,32 @@ The same runner measures plan reconciliation against one ordinary full update. I
 
 Distribute the reviewed source or complete plugin directory with its license. Exclude private databases, sidecars, tokens, logs, environment files, bytecode, caches, local evidence, and `.git`. This repository implies no public plugin-directory submission, signature, or host verification.
 
-Published npm versions cannot be replaced. The source manifests and npm marketplace pin identify `0.2.1`; check [distribution status](installation.md#distribution-status) for public availability. For future package changes, prepare a new version and check package, plugin, and marketplace version agreement. Before publication, pack and review the release artifact outside the repository:
+Published npm versions cannot be replaced. The source manifests and npm marketplace pin identify `0.2.1`; check [distribution status](installation.md#distribution-status) for public availability. Future package releases pair `codex-progress-panel@VERSION` with Git tag `vVERSION` and a published GitHub Release for the same reviewed source commit. A release is complete only after all three are verified. The providers cannot publish atomically; a partial publication remains incomplete until the missing step is recovered.
+
+### Prepare the release
+
+Prepare a new version for changed package bytes. Check package, plugin, and npm marketplace version agreement, including runtime version strings, tests and versioned documentation. Documentation changes outside the npm payload do not require a new npm version. Run the source checks above and complete the applicable artifact and acceptance review; keep native-host evidence separate.
+
+Use a clean committed source revision on `main`. Record its full commit SHA, verify that remote `main` equals it, and require successful Checks for that exact SHA. Committing, pushing and publication need authority covering those actions; this runbook grants none. For a future release authorized to publish to both npm and GitHub, execute the whole approved sequence without asking again between its covered actions. Stop for a mismatch, missing authority or uncertain result.
+
+Set `version` to the reviewed package version and capture the immutable source identity from the repository root:
+
+```sh
+version="$(node -p 'require("./plugins/progress-panel/package.json").version')"
+tag="v$version"
+source_sha="$(git rev-parse HEAD)"
+repo="Karikatun/codex-progress-panel"
+git status --porcelain=v1 --untracked-files=all
+git ls-remote origin refs/heads/main
+```
+
+Confirm the expected repository/remote, no source or control drift, an empty status output and the matching remote SHA before continuing. Capture the version, SHA, check results and artifact identities outside the repository. Before any publication, inspect npm metadata and dist-tags, local and remote tags, and the GitHub Release for this exact version. An absent version/tag/release must be established by a successful provider response; authentication or network errors are not evidence of absence. If an object already exists, use the recovery rules below.
+
+Pack and review the release artifact outside the repository:
 
 ```sh
 release_dir="$(mktemp -d)"
-npm pack ./plugins/progress-panel --ignore-scripts --pack-destination "$release_dir" --json
+npm pack ./plugins/progress-panel --ignore-scripts --pack-destination "$release_dir" --json > "$release_dir/pack.json"
 ```
 
 Inspect the resulting tarball's contents, size, and integrity. Its payload must contain exactly these nine files:
@@ -82,4 +103,47 @@ mcp.json
 skills/progress-panel/SKILL.md
 ```
 
-Preserve the reviewed tarball and SHA-256. Only publish that exact artifact after authorization. Public registry checks, tags, remote CI, and host activation require separate evidence. Test the published exact version and its full-plugin native UI in an isolated host.
+From `pack.json`, record the exact tarball path, version, size, unpacked size, shasum and integrity. Inspect its contents and compare the unpacked files and modes with the reviewed source. Preserve the tarball and its SHA-256, and prepare reviewed release notes outside the repository. The notes must identify the version and full source SHA, summarize the changes and validation limits, and link to the exact npm version and GitHub source commit. Recheck source and tarball identities before publication. Set `tarball` and `notes_file` to those exact reviewed files; do not use a wildcard or repack after approval.
+
+### Publish the approved version
+
+1. Publish only the reviewed tarball, with the approved stable `latest` dist-tag:
+
+   ```sh
+   npm publish "$tarball" --ignore-scripts --access public --tag latest
+   ```
+
+   Read back the exact version's registry metadata and npm dist-tags. Check name/version, `dist.shasum` and `dist.integrity` against `pack.json`, and require npm `latest` to equal `version`. Download the registry's exact-version tarball outside the repository; verify its SHA-256 against the retained artifact and compare its unpacked payload and modes with the reviewed source. Record the registry response and the exact npm URL `https://www.npmjs.com/package/codex-progress-panel/v/VERSION`. Test the published exact version in isolation. A successful publish command alone is insufficient.
+
+2. Create the version tag at the recorded commit, then push only that tag:
+
+   ```sh
+   git tag -a "$tag" "$source_sha" -m "Release $tag"
+   git rev-parse "$tag^{commit}"
+   git push origin "refs/tags/$tag:refs/tags/$tag"
+   git ls-remote origin "refs/tags/$tag" "refs/tags/$tag^{}"
+   ```
+
+   Require the local peeled commit and remote peeled `^{}` SHA to equal `source_sha`. For an existing lightweight tag, its direct remote SHA must equal `source_sha`; for an annotated tag, verify the peeled SHA. Never force, move, delete or overwrite a version tag. Verify the source identity again before creating the Release; the recorded commit, rather than a moving branch, is the release target.
+
+3. Create the GitHub Release using the verified existing remote tag and reviewed notes:
+
+   ```sh
+   gh release create "$tag" --repo "$repo" --verify-tag \
+     --title "$tag" --notes-file "$notes_file" --latest
+   gh release view "$tag" --repo "$repo" \
+     --json tagName,targetCommitish,isDraft,isPrerelease,publishedAt,body,url
+   gh release view --repo "$repo" --json tagName,url
+   ```
+
+   Require `tagName` to equal `tag`, a publication timestamp, `isDraft: false` and `isPrerelease: false`. Check the published body contains the reviewed version, full SHA and exact npm/source links, and verify that GitHub's latest Release is this tag. `targetCommitish` alone does not prove the tag's commit: retain the remote tag verification from step 2. Record the Release URL and recheck npm `latest` before declaring the paired release complete. This stable-release sequence requires the version to be the intended newest stable release; an older version or prerelease needs an explicitly scoped distribution policy instead of changing `latest` by accident.
+
+Test the published exact version's full-plugin native UI in an isolated host before claiming that route is verified. Publication, remote CI, public package behavior and host activation remain separate evidence.
+
+### Recover an incomplete release
+
+After an error, timeout or authentication interruption, read provider state before retrying any write. Do not treat a failed client command as proof that the provider rejected the write, change authentication/settings without authority, force a tag, overwrite a Release or republish an existing npm version.
+
+If npm already contains the approved version, first verify its metadata, artifact/payload and dist-tag as above. Resume only the missing tag or GitHub Release step using the retained source SHA, tarball and notes; never bump or republish merely to repair GitHub. An existing tag must resolve to the approved SHA. An existing Release must pass the version, body, flags and latest checks. A matching existing object satisfies its step without another create command. If a tag or Release exists while npm is absent, verify the GitHub objects first and publish only the missing npm artifact under the original release authority.
+
+If an existing object differs, an artifact is unavailable, a provider read is inconclusive, `latest` has moved to a newer version, or the required source/CI evidence is missing, stop and report the specific mismatch and incomplete state. Resolve it with scoped authority; do not silently replace public history or downgrade a latest pointer. Preserve completed-provider evidence so recovery can finish the same approved version.
